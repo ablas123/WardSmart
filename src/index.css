@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  /* Modern professional polish color tokens mapping */
+  --color-brand-primary: #1e293b; /* Deep slate */
+  --color-brand-secondary: #0f172a; /* Darkest slate for text */
+  --color-brand-accent: #2563eb; /* Crisp Google clinical blue */
+  --color-brand-accent-light: #eff6ff; /* Soft blue background */
+  --color-brand-border: #e2e8f0; /* Ultra-thin light slate border */
+  --color-brand-background: #f8fafc; /* Sleek workspace background */
+  
+  /* Statuses */
+  --color-status-success: #10b981;
+  --color-status-success-bg: #ecfdf5;
+  --color-status-warning: #f59e0b;
+  --color-status-warning-bg: #fffbeb;
+  --color-status-danger: #ef4444;
+  --color-status-danger-bg: #fef2f2;
+}
+
+:root {
+  --primary-rgb: 30, 41, 59;
+  --accent-rgb: 37, 99, 235;
+}
+
+body {
+  font-family: "Cairo", ui-sans-serif, system-ui, sans-serif;
+  background-color: var(--color-brand-background);
+  color: var(--color-brand-secondary);
+  direction: rtl;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbars - professional and slim */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Polished styling utility classes */
+.card-polished {
+  background-color: #ffffff;
+  border: 1px solid var(--color-brand-border);
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.02), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-polished:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-polished {
+  background-color: #ffffff;
+  border-left: 1px solid var(--color-brand-border);
+}
+
+/* Print optimizations for clinical charts */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+  .card-polished {
+    border: 1px solid #94a3b8 !important;
+    box-shadow: none !important;
+  }
+}
