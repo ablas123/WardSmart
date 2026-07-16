@@ -183,6 +183,68 @@ export default function Dashboard({ patients, tasks, handovers, onNavigate, curr
         
         {/* Column 1 & 2: Quick Status Distribution & Urgent Clinical tasks */}
         <div className="lg:col-span-2 space-y-6">
+          
+          {/* Interactive Bed Map Card */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xs">
+            <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Activity className="w-5 h-5 text-indigo-600 animate-pulse" />
+                {lang === 'ar' ? 'خارطة أسرة قسم تنويم الأطفال التفاعلية' : 'Interactive Pediatric Ward Bed Map'}
+              </span>
+              <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg border border-slate-200 font-bold">
+                {lang === 'ar' ? `المشغولة: ${activePatients.length} / المجموع: 7` : `Occupied: ${activePatients.length} / Total: 7`}
+              </span>
+            </h2>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {['A1', 'A2', 'B1', 'B2', 'B3', 'C1', 'C2'].map((bed) => {
+                const pat = activePatients.find(p => p.bedNumber === bed);
+                let bgStyle = "bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300";
+                let statusBadge = null;
+
+                if (pat) {
+                  if (pat.status === 'critical') {
+                    bgStyle = "bg-red-50/70 border-red-200 hover:bg-red-50 text-red-700";
+                    statusBadge = lang === 'ar' ? 'حرجة ⚠️' : 'Critical ⚠️';
+                  } else if (pat.status === 'followup') {
+                    bgStyle = "bg-amber-50/70 border-amber-200 hover:bg-amber-50 text-amber-700";
+                    statusBadge = lang === 'ar' ? 'متابعة ⏳' : 'Followup ⏳';
+                  } else {
+                    bgStyle = "bg-emerald-50/70 border-emerald-200 hover:bg-emerald-50 text-emerald-700";
+                    statusBadge = lang === 'ar' ? 'مستقرة ✓' : 'Stable ✓';
+                  }
+                }
+
+                return (
+                  <div 
+                    key={bed}
+                    onClick={() => onNavigate('ward')}
+                    className={`p-3 rounded-xl border transition-all cursor-pointer text-right flex flex-col justify-between h-24 ${bgStyle}`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-black bg-white/60 px-1.5 py-0.5 rounded-md border border-black/5">{bed}</span>
+                      {statusBadge && <span className="text-[8px] font-black">{statusBadge}</span>}
+                    </div>
+
+                    {pat ? (
+                      <div className="space-y-0.5 mt-2">
+                        <span className="text-[11px] font-black block truncate">{pat.name}</span>
+                        <span className="text-[9px] opacity-80 block truncate">
+                          {pat.age} • {pat.gender === 'male' ? (lang === 'ar' ? 'ذكر' : 'M') : (lang === 'ar' ? 'أنثى' : 'F')}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="mt-auto">
+                        <span className="text-[10px] text-slate-400 font-bold block">{lang === 'ar' ? 'سرير شاغر' : 'Empty Bed'}</span>
+                        <span className="text-[8px] text-emerald-600 block font-semibold">{lang === 'ar' ? 'متاح للتنويم' : 'Available'}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Patient Distribution Graph */}
           <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xs">
             <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">

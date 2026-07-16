@@ -60,6 +60,7 @@ export default function App() {
 
   // New staff registration (Director only)
   const [isRegOpen, setIsRegOpen] = useState(false);
+  const [regModalTab, setRegModalTab] = useState<'register' | 'list'>('register');
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPass, setRegPass] = useState('');
@@ -288,6 +289,34 @@ export default function App() {
       }
     } catch (err) {
       setRegError('فشل الاتصال بالخادم لإتمام تسجيل الكادر المناوب.');
+    }
+  };
+
+  // Staff deletion
+  const handleDeleteStaff = async (userIdToDelete: string) => {
+    setRegError(null);
+    setRegSuccess(false);
+
+    try {
+      const response = await fetch(`/api/users/${userIdToDelete}`, {
+        method: 'DELETE',
+        headers: {
+          'x-user-id': encodeURIComponent(currentUser?.id || ''),
+          'x-user-role': encodeURIComponent(currentUser?.role || ''),
+          'x-user-name': encodeURIComponent(currentUser?.name || '')
+        }
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setRegSuccess(true);
+        setTeamMembers(data.users);
+        localDB.saveTeamMembers(data.users);
+      } else {
+        setRegError(data.error || 'فشلت عملية الحذف');
+      }
+    } catch (err) {
+      setRegError('فشل الاتصال بالخادم لإتمام حذف المستخدم.');
     }
   };
 
@@ -720,102 +749,204 @@ export default function App() {
             >
               <div className="flex justify-between items-center border-b border-slate-700 pb-3">
                 <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                  <UserPlus className="w-5 h-5 text-blue-400" />
-                  تسجيل وتفويض كادر طبي جديد بالقسم
+                  <Users className="w-5 h-5 text-blue-400" />
+                  {lang === 'ar' ? 'إدارة وتفويض الكادر الطبي بالقسم' : 'Medical Staff Authorization'}
                 </h3>
-                <button onClick={() => setIsRegOpen(false)} className="text-slate-400 hover:text-white">
+                <button 
+                  onClick={() => {
+                    setIsRegOpen(false);
+                    setRegSuccess(false);
+                    setRegError(null);
+                  }} 
+                  className="text-slate-400 hover:text-white"
+                >
                   ✕
                 </button>
               </div>
 
-              <form onSubmit={handleRegisterStaff} className="space-y-4 text-xs">
-                
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-300 font-bold block">اسم الطبيب بالكامل *</label>
-                  <input 
-                    type="text" 
-                    placeholder="مثل: د. سارة العثمان"
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
-                    required
-                  />
-                </div>
+              {/* Tabs Switcher */}
+              <div className="flex bg-slate-900 p-1 rounded-xl gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegModalTab('register');
+                    setRegSuccess(false);
+                    setRegError(null);
+                  }}
+                  className={`flex-1 text-center py-2 text-xs font-bold rounded-lg transition-all ${
+                    regModalTab === 'register' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {lang === 'ar' ? 'تسجيل كادر جديد' : 'Register New'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegModalTab('list');
+                    setRegSuccess(false);
+                    setRegError(null);
+                  }}
+                  className={`flex-1 text-center py-2 text-xs font-bold rounded-lg transition-all ${
+                    regModalTab === 'list' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {lang === 'ar' ? `الطاقم الحالي (${teamMembers.length})` : `Active Staff (${teamMembers.length})`}
+                </button>
+              </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-300 font-bold block">البريد الإلكتروني المهني *</label>
-                  <input 
-                    type="email" 
-                    placeholder="sarah@ward.com"
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
+              {regModalTab === 'register' ? (
+                <form onSubmit={handleRegisterStaff} className="space-y-4 text-xs">
+                  
                   <div className="space-y-1">
-                    <label className="text-[10px] text-slate-300 font-bold block">الدور السريري الممنوح *</label>
-                    <select 
-                      value={regRole}
-                      onChange={(e) => setRegRole(e.target.value as UserRole)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
-                    >
-                      <option value="Intern">طبيب امتياز (Intern)</option>
-                      <option value="General">طبيب عام (General)</option>
-                      <option value="Deputy">نائب استشاري (Deputy)</option>
-                      <option value="Specialist">أخصائي (Specialist)</option>
-                      <option value="Director">مدير القسم (Director)</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-300 font-bold block">كلمة المرور المؤقتة *</label>
+                    <label className="text-[10px] text-slate-300 font-bold block">اسم الطبيب بالكامل *</label>
                     <input 
-                      type="password" 
-                      value={regPass}
-                      onChange={(e) => setRegPass(e.target.value)}
-                      placeholder="كلمة مرور الدخول الأولى"
+                      type="text" 
+                      placeholder="مثل: د. سارة العثمان"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
                       className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
                       required
                     />
                   </div>
-                </div>
 
-                {regError && (
-                  <div className="p-3 bg-red-950/40 text-red-300 border border-red-900 rounded-xl text-xs">
-                    ⚠️ {regError}
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-300 font-bold block">البريد الإلكتروني المهني *</label>
+                    <input 
+                      type="email" 
+                      placeholder="sarah@ward.com"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
+                      required
+                    />
                   </div>
-                )}
 
-                {regSuccess && (
-                  <div className="p-3 bg-green-950/40 text-green-300 border border-green-900 rounded-xl text-xs font-bold">
-                    ✓ تم تسجيل وتفويض الطبيب بنجاح ويمكنه تسجيل الدخول فوراً!
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-300 font-bold block">الدور السريري الممنوح *</label>
+                      <select 
+                        value={regRole}
+                        onChange={(e) => setRegRole(e.target.value as UserRole)}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
+                      >
+                        <option value="Intern">طبيب امتياز (Intern)</option>
+                        <option value="General">طبيب عام (General)</option>
+                        <option value="Deputy">نائب استشاري (Deputy)</option>
+                        <option value="Specialist">أخصائي (Specialist)</option>
+                        <option value="Director">مدير القسم (Director)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-300 font-bold block">كلمة المرور المؤقتة *</label>
+                      <input 
+                        type="password" 
+                        value={regPass}
+                        onChange={(e) => setRegPass(e.target.value)}
+                        placeholder="كلمة مرور الدخول الأولى"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl focus:outline-none"
+                        required
+                      />
+                    </div>
                   </div>
-                )}
 
-                <div className="flex gap-2 pt-3 border-t border-slate-700">
-                  <button 
-                    type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl flex-1 transition-all"
-                  >
-                    تفويض وتسجيل الكادر
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setIsRegOpen(false);
-                      setRegSuccess(false);
-                      setRegError(null);
-                    }}
-                    className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold px-4 py-2 rounded-xl transition-all"
-                  >
-                    إغلاق النافذة
-                  </button>
+                  {regError && (
+                    <div className="p-3 bg-red-950/40 text-red-300 border border-red-900 rounded-xl text-xs">
+                      ⚠️ {regError}
+                    </div>
+                  )}
+
+                  {regSuccess && (
+                    <div className="p-3 bg-green-950/40 text-green-300 border border-green-900 rounded-xl text-xs font-bold">
+                      ✓ تم تسجيل وتفويض الطبيب بنجاح ويمكنه تسجيل الدخول فوراً!
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-3 border-t border-slate-700">
+                    <button 
+                      type="submit"
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl flex-1 transition-all"
+                    >
+                      تفويض وتسجيل الكادر
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setIsRegOpen(false);
+                        setRegSuccess(false);
+                        setRegError(null);
+                      }}
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold px-4 py-2 rounded-xl transition-all"
+                    >
+                      إغلاق النافذة
+                    </button>
+                  </div>
+
+                </form>
+              ) : (
+                <div className="space-y-4 text-xs">
+                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                    {teamMembers.map((member) => {
+                      const isMainAdmin = member.id === 'u-admin';
+                      const isSelf = member.id === currentUser?.id;
+                      return (
+                        <div 
+                          key={member.id} 
+                          className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-700/60 hover:border-slate-600 transition-colors"
+                        >
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-white text-xs block">{member.name} {isSelf && <span className="text-[10px] text-blue-400 font-normal">(أنت)</span>}</span>
+                            <span className="text-[10px] text-slate-400 block">{member.email}</span>
+                            <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${getRoleColor(member.role)}`}>
+                              {getRoleLabel(member.role, lang)}
+                            </span>
+                          </div>
+
+                          {!isMainAdmin && !isSelf && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteStaff(member.id)}
+                              className="px-2.5 py-1.5 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg border border-red-500/20 transition-all font-semibold cursor-pointer"
+                            >
+                              {lang === 'ar' ? 'حذف الكادر' : 'Remove'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {regError && (
+                    <div className="p-3 bg-red-950/40 text-red-300 border border-red-900 rounded-xl text-xs">
+                      ⚠️ {regError}
+                    </div>
+                  )}
+
+                  {regSuccess && (
+                    <div className="p-3 bg-green-950/40 text-green-300 border border-green-900 rounded-xl text-xs font-bold">
+                      ✓ تم إلغاء تفويض وحذف الطبيب بنجاح وتحديث كادر القسم!
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-3 border-t border-slate-700">
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setIsRegOpen(false);
+                        setRegSuccess(false);
+                        setRegError(null);
+                      }}
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold px-4 py-2 rounded-xl w-full transition-all text-center"
+                    >
+                      إغلاق النافذة
+                    </button>
+                  </div>
                 </div>
-
-              </form>
+              )}
             </motion.div>
           </div>
         )}

@@ -9,6 +9,8 @@ import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { initializeApp } from "firebase/app";
+import { getFirestore, initializeFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
 
 const app = express();
 const PORT = 3000;
@@ -231,6 +233,123 @@ function initializeDatabase() {
 
 initializeDatabase();
 
+// --- Firebase Firestore Initialization & Sync ---
+let firebaseApp: any = null;
+let firestoreDb: any = null;
+
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    firebaseApp = initializeApp({
+      apiKey: config.apiKey,
+      authDomain: config.authDomain,
+      projectId: config.projectId,
+      storageBucket: config.storageBucket,
+      messagingSenderId: config.messagingSenderId,
+      appId: config.appId,
+    });
+    if (config.firestoreDatabaseId) {
+      firestoreDb = initializeFirestore(firebaseApp, {
+        experimentalForceLongPolling: true
+      }, config.firestoreDatabaseId);
+    } else {
+      firestoreDb = initializeFirestore(firebaseApp, {
+        experimentalForceLongPolling: true
+      });
+    }
+    console.log("Firebase initialized successfully on server with projectId:", config.projectId);
+  } else {
+    console.warn("firebase-applet-config.json not found. Operating with local filesystem database.");
+  }
+} catch (error) {
+  console.error("Failed to initialize Firebase:", error);
+}
+
+// Background Task to mirror local updates to Firestore
+async function saveToFirestore(db: any) {
+  if (!firestoreDb) return;
+  try {
+    const collectionsToSync = ["users", "patients", "tasks", "handovers", "clinicSlots", "chatMessages", "auditLog", "alerts"];
+    for (const colName of collectionsToSync) {
+      const items = db[colName] || [];
+      const colRef = collection(firestoreDb, colName);
+      const querySnapshot = await getDocs(colRef);
+      
+      const existingIds = new Set<string>();
+      querySnapshot.forEach(doc => existingIds.add(doc.id));
+
+      const currentIds = new Set(items.map((item: any) => item.id).filter(Boolean));
+
+      // 1. Delete items that were removed locally
+      for (const id of existingIds) {
+        if (!currentIds.has(id)) {
+          const docRef = doc(firestoreDb, colName, id);
+          await deleteDoc(docRef);
+        }
+      }
+
+      // 2. Add or update items
+      for (const item of items) {
+        const { id, ...data } = item;
+        if (id) {
+          const docRef = doc(firestoreDb, colName, id);
+          await setDoc(docRef, data);
+        }
+      }
+    }
+    console.log("Successfully synchronized and persisted all database updates to Cloud Firestore.");
+  } catch (error) {
+    console.error("Failed to write updates to Cloud Firestore:", error);
+  }
+}
+
+// Synchronize memory and local cache file with Cloud Firestore on startup
+async function syncDatabaseWithFirestore() {
+  if (!firestoreDb) return;
+  console.log("Synchronizing local cache file with Cloud Firestore...");
+
+  const collectionsToSync = ["users", "patients", "tasks", "handovers", "clinicSlots", "chatMessages", "auditLog", "alerts"];
+  const dbData: any = {};
+
+  try {
+    for (const colName of collectionsToSync) {
+      const colRef = collection(firestoreDb, colName);
+      const querySnapshot = await getDocs(colRef);
+      dbData[colName] = [];
+      querySnapshot.forEach((doc) => {
+        dbData[colName].push({ id: doc.id, ...doc.data() });
+      });
+    }
+
+    const isFirestoreEmpty = collectionsToSync.every(col => !dbData[col] || dbData[col].length === 0);
+    if (isFirestoreEmpty) {
+      console.log("Firestore is empty. Seeding Cloud Firestore with default clinical pediatric data...");
+      initializeDatabase();
+      const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+      
+      for (const colName of collectionsToSync) {
+        const items = localData[colName] || [];
+        for (const item of items) {
+          const { id, ...data } = item;
+          if (id) {
+            const docRef = doc(firestoreDb, colName, id);
+            await setDoc(docRef, data);
+          }
+        }
+      }
+      console.log("Cloud Firestore successfully seeded with high-quality pediatric data.");
+      return;
+    }
+
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
+    fs.writeFileSync(BACKUP_FILE, JSON.stringify(dbData, null, 2));
+    console.log("Local database cache successfully loaded from Cloud Firestore.");
+  } catch (error) {
+    console.error("Error during Firestore sync on startup:", error);
+  }
+}
+
 // Periodic Backup (Every 6 hours simulation or trigger)
 setInterval(() => {
   try {
@@ -262,6 +381,7 @@ function readDB() {
 // Helper to write DB
 function writeDB(data: any) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  saveToFirestore(data).catch(err => console.error("Async firestore sync failed:", err));
 }
 
 // Helper to write Audit Log Entry
@@ -374,6 +494,36 @@ app.get("/api/users", (req, res) => {
   const db = readDB();
   const safeUsers = db.users.map(({ password: _, ...u }: any) => u);
   res.json({ users: safeUsers });
+});
+
+// Delete User (Director, Specialist, and Deputy)
+app.delete("/api/users/:id", (req, res) => {
+  const adminRole = safeDecodeHeader(req.headers["x-user-role"] as string);
+  const adminId = safeDecodeHeader(req.headers["x-user-id"] as string);
+  const adminName = safeDecodeHeader(req.headers["x-user-name"] as string);
+
+  if (adminRole !== "Director" && adminRole !== "Specialist" && adminRole !== "Deputy") {
+    return res.status(403).json({ error: "غير مصرح. حذف الكادر الطبي متاح للمدير والأخصائي والنائب فقط." });
+  }
+
+  const userIdToDelete = req.params.id;
+  if (userIdToDelete === "u-admin" || userIdToDelete === adminId) {
+    return res.status(400).json({ error: "لا يمكن حذف حساب المدير الرئيسي أو حسابك الشخصي الحالي." });
+  }
+
+  const db = readDB();
+  const index = db.users.findIndex((u: any) => u.id === userIdToDelete);
+  if (index === -1) {
+    return res.status(404).json({ error: "المستخدم غير موجود" });
+  }
+
+  const deletedUser = db.users[index];
+  db.users.splice(index, 1);
+  writeDB(db);
+
+  addAuditEntry(adminId || "system", adminName || "Director", adminRole as any || "Director", "حذف مستخدم", `تم حذف المستخدم ${deletedUser.name} (${deletedUser.role})`);
+
+  res.json({ success: true, users: db.users.map(({ password: _, ...u }: any) => u) });
 });
 
 // Synchronization Endpoint (Supports client actions + offline updates)
@@ -773,6 +923,13 @@ app.post("/api/gemini/predictive-analytics", async (req, res) => {
 
 // Serve React app in Vite development vs production
 async function startServer() {
+  // Sync local cache with Cloud Firestore on boot
+  try {
+    await syncDatabaseWithFirestore();
+  } catch (err) {
+    console.error("Failed to sync database with Firestore on boot:", err);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
