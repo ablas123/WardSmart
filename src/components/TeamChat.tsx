@@ -39,30 +39,32 @@ export default function TeamChat({ chatMessages, teamMembers, currentUser, onSen
       <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-100 p-5 shadow-xs flex flex-col h-full">
         <h2 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
           <Users className="w-4.5 h-4.5 text-blue-600" />
-          الطاقم الطبي المناوب ({teamMembers.length})
+          {lang === 'en' ? `Medical Staff on Duty (${teamMembers.filter(m => !m.archived && !m.disabled).length})` : `الطاقم الطبي المناوب (${teamMembers.filter(m => !m.archived && !m.disabled).length})`}
         </h2>
 
         <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-          {teamMembers.map((member) => (
-            <div key={member.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-all">
-              <div className="flex items-center gap-2.5">
-                <div className="relative">
-                  <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-2xs">
-                    {member.name.substring(3, 5).trim() || member.name[0]}
+          {teamMembers
+            .filter(member => !member.archived && !member.disabled)
+            .map((member) => (
+              <div key={member.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-all">
+                <div className="flex items-center gap-2.5">
+                  <div className="relative">
+                    <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-2xs">
+                      {member.name.substring(3, 5).trim() || member.name[0]}
+                    </div>
+                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white"></span>
                   </div>
-                  <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white"></span>
+                  <div>
+                    <span className="font-bold text-xs text-slate-800 block">{member.name}</span>
+                    <span className="text-[9px] text-slate-400 block">{member.email}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="font-bold text-xs text-slate-800 block">{member.name}</span>
-                  <span className="text-[9px] text-slate-400 block">{member.email}</span>
-                </div>
-              </div>
 
-              <span className={`text-[8px] font-bold px-2 py-0.5 rounded-lg border ${getRoleColor(member.role)}`}>
-                {getRoleLabel(member.role).split(' ')[0]}
-              </span>
-            </div>
-          ))}
+                <span className={`text-[8px] font-bold px-2 py-0.5 rounded-lg border ${getRoleColor(member.role)}`}>
+                  {getRoleLabel(member.role, lang).split(' ')[0]}
+                </span>
+              </div>
+            ))}
         </div>
 
         <div className="text-[9px] text-slate-400 border-t border-slate-100 pt-3 mt-4 flex items-center gap-1 font-semibold">

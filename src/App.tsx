@@ -23,7 +23,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
   // Language & Translation State
-  const [lang, setLang] = useState<Language>(() => (localStorage.getItem('coreward_lang') as Language) || 'ar');
+  const [lang, setLang] = useState<Language>(() => (localStorage.getItem('coreward_lang') as Language) || 'en');
 
   useEffect(() => {
     localStorage.setItem('coreward_lang', lang);
@@ -62,7 +62,9 @@ export default function App() {
 
   // New staff registration (Director only)
   const [isRegOpen, setIsRegOpen] = useState(false);
-  const [regModalTab, setRegModalTab] = useState<'register' | 'list'>('register');
+  const [regModalTab, setRegModalTab] = useState<'register' | 'list' | 'units'>('register');
+  const [newUnitId, setNewUnitId] = useState('');
+  const [newUnitName, setNewUnitName] = useState('');
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPass, setRegPass] = useState('');
@@ -278,6 +280,73 @@ export default function App() {
   const handleLogout = () => {
     localDB.saveCurrentUser(null);
     setCurrentUser(null);
+  };
+
+  // Add and Delete Units Configuration (Director Only)
+  const handleAddUnit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUnitId || !newUnitName) {
+      alert(lang === 'ar' ? 'يرجى تعبئة جميع الخانات للقسم الجديد.' : 'Please fill all fields for the new unit.');
+      return;
+    }
+    const cleanId = newUnitId.trim().toLowerCase().replace(/\s+/g, '-');
+    const existUnit = units.find(u => u.id === cleanId);
+    if (existUnit) {
+      alert(lang === 'ar' ? 'معرّف القسم هذا موجود بالفعل!' : 'This unit ID already exists!');
+      return;
+    }
+    const updatedUnits = [...units, { id: cleanId, name: newUnitName.trim(), nameAr: newUnitName.trim() }];
+    try {
+      const response = await fetch('/api/admin/units', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ units: updatedUnits })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUnits(data.units);
+        localDB.saveUnits(data.units);
+        setNewUnitId('');
+        setNewUnitName('');
+        handleAddAuditLogLocal('إضافة قسم طبي جديد', `تمت إضافة القسم الطبي ${newUnitName.trim()} بنجاح.`);
+        alert(lang === 'ar' ? 'تم إضافة القسم بنجاح!' : 'Unit added successfully!');
+      } else {
+        alert('حدث خطأ أثناء حفظ القسم');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteUnit = async (id: string) => {
+    if (units.length <= 1) {
+      alert(lang === 'ar' ? 'لا يمكن حذف جميع الأقسام! يجب بقاء قسم واحد على الأقل.' : 'Cannot delete all units! At least one unit must remain.');
+      return;
+    }
+    const targetUnit = units.find(u => u.id === id);
+    const unitName = targetUnit ? targetUnit.name : id;
+    if (!confirm(lang === 'ar' ? `هل أنت متأكد من حذف القسم: ${unitName}؟` : `Are you sure you want to delete unit: ${unitName}?`)) {
+      return;
+    }
+    const filteredUnits = units.filter(u => u.id !== id);
+    try {
+      const response = await fetch('/api/admin/units', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ units: filteredUnits })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUnits(data.units);
+        localDB.saveUnits(data.units);
+        handleAddAuditLogLocal('حذف قسم طبي', `تم حذف القسم الطبي ${unitName} بنجاح.`);
+        alert(lang === 'ar' ? 'تم حذف القسم بنجاح!' : 'Unit deleted successfully!');
+      } else {
+        alert('حدث خطأ أثناء حذف القسم');
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Staff registration
@@ -662,6 +731,7 @@ export default function App() {
             onUpdatePatient={handleUpdatePatient}
             onAddAuditLog={handleAddAuditLogLocal}
             lang={lang}
+            units={units}
           />
         );
       case 'tasks':
@@ -797,7 +867,7 @@ export default function App() {
                   {units && units.length > 0 ? (
                     units.map((u: any) => (
                       <option key={u.id} value={u.id} className="text-slate-800">
-                        🏥 {lang === 'ar' ? u.nameAr : u.name}
+                        🏥 {lang === 'ar' ? (u.nameAr || u.name) : u.name}
                       </option>
                     ))
                   ) : (
@@ -816,7 +886,7 @@ export default function App() {
                       const myUnitId = currentUser.assignedUnitId || 'unit-peds';
                       const matchedUnit = units?.find((u: any) => u.id === myUnitId);
                       return matchedUnit 
-                        ? (lang === 'ar' ? matchedUnit.nameAr : matchedUnit.name) 
+                        ? (lang === 'ar' ? (matchedUnit.nameAr || matchedUnit.name) : matchedUnit.name) 
                         : (lang === 'ar' ? 'جناح الأطفال' : 'Pediatric Ward');
                     })()}
                   </span>
@@ -946,7 +1016,7 @@ export default function App() {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {lang === 'ar' ? 'تسجيل كادر جديد' : 'Register New'}
+                  {lang === 'ar' ? 'تسجيل كادر' : 'Register'}
                 </button>
                 <button
                   type="button"
@@ -961,11 +1031,26 @@ export default function App() {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {lang === 'ar' ? `الطاقم الحالي (${teamMembers.length})` : `Active Staff (${teamMembers.length})`}
+                  {lang === 'ar' ? `الكادر (${teamMembers.length})` : `Staff (${teamMembers.length})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegModalTab('units');
+                    setRegSuccess(false);
+                    setRegError(null);
+                  }}
+                  className={`flex-1 text-center py-2 text-xs font-bold rounded-lg transition-all ${
+                    regModalTab === 'units' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {lang === 'ar' ? 'إدارة الأقسام' : 'Units'}
                 </button>
               </div>
 
-              {regModalTab === 'register' ? (
+              {regModalTab === 'register' && (
                 <form onSubmit={handleRegisterStaff} className="space-y-4 text-xs">
                   
                   <div className="space-y-1">
@@ -1054,7 +1139,9 @@ export default function App() {
                   </div>
 
                 </form>
-              ) : (
+              )}
+
+              {regModalTab === 'list' && (
                 <div className="space-y-4 text-xs">
                   <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
                     {teamMembers.map((member) => {
@@ -1106,7 +1193,7 @@ export default function App() {
                                   >
                                     {units?.map((u: any) => (
                                       <option key={u.id} value={u.id}>
-                                        {lang === 'ar' ? u.nameAr : u.name}
+                                        {lang === 'ar' ? (u.nameAr || u.name) : u.name}
                                       </option>
                                     ))}
                                   </select>
@@ -1184,6 +1271,86 @@ export default function App() {
                       className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold px-4 py-2 rounded-xl w-full transition-all text-center"
                     >
                       إغلاق النافذة
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {regModalTab === 'units' && (
+                <div className="space-y-4 text-xs animate-fadeIn">
+                  {/* Add Unit Form */}
+                  <form onSubmit={handleAddUnit} className="space-y-2.5 bg-slate-900 p-3.5 rounded-xl border border-slate-700">
+                    <span className="text-[10px] text-blue-400 font-extrabold uppercase tracking-wider block">
+                      {lang === 'ar' ? 'إضافة قسم طبي جديد' : 'Add New Department/Unit'}
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[9px] text-slate-300 font-bold block">{lang === 'ar' ? 'معرّف القسم (بالإنجليزي) *' : 'Unit ID (lowercase, hyphen) *'}</label>
+                        <input 
+                          type="text"
+                          placeholder="e.g., unit-nicu"
+                          value={newUnitId}
+                          onChange={(e) => setNewUnitId(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 text-white rounded-lg focus:outline-none text-[11px]"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] text-slate-300 font-bold block">{lang === 'ar' ? 'اسم القسم بالكامل *' : 'Full Unit Name *'}</label>
+                        <input 
+                          type="text"
+                          placeholder="e.g., العناية المشددة لحديثي الولادة"
+                          value={newUnitName}
+                          onChange={(e) => setNewUnitName(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 text-white rounded-lg focus:outline-none text-[11px]"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <button 
+                      type="submit"
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 rounded-lg text-xs transition-all mt-1"
+                    >
+                      {lang === 'ar' ? 'إضافة وتفعيل القسم' : 'Add & Enable Unit'}
+                    </button>
+                  </form>
+
+                  {/* Existing Units List */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">
+                      {lang === 'ar' ? 'الأقسام والوحدات الطبية الفعالة' : 'Active Medical Departments'}
+                    </span>
+                    <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                      {units?.map((u: any) => (
+                        <div key={u.id} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center hover:border-slate-700">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-white text-xs block">{lang === 'ar' ? (u.nameAr || u.name) : u.name}</span>
+                            <span className="text-[9px] text-slate-500 font-bold block">ID: {u.id}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUnit(u.id)}
+                            className="text-red-400 hover:text-red-500 hover:bg-red-500/10 p-1.5 rounded-lg transition-all font-black text-xs"
+                            title={lang === 'ar' ? 'حذف القسم' : 'Delete Unit'}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-3 border-t border-slate-700">
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setIsRegOpen(false);
+                        setRegSuccess(false);
+                        setRegError(null);
+                      }}
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold px-4 py-2 rounded-xl w-full transition-all text-center"
+                    >
+                      {lang === 'ar' ? 'إغلاق النافذة' : 'Close'}
                     </button>
                   </div>
                 </div>

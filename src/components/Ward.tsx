@@ -32,15 +32,16 @@ interface WardProps {
   onUpdatePatient: (patientId: string, updates: Partial<Patient>) => void;
   onAddAuditLog: (action: string, details: string) => void;
   lang?: Language;
+  units?: any[];
 }
 
-export default function Ward({ patients, teamMembers, currentUser, onAddPatient, onUpdatePatient, onAddAuditLog, lang = 'ar' }: WardProps) {
+export default function Ward({ patients, teamMembers, currentUser, onAddPatient, onUpdatePatient, onAddAuditLog, lang = 'ar', units = [] }: WardProps) {
   const t = translations[lang];
   const isEn = lang === 'en';
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [detailTab, setDetailTab] = useState<'overview' | 'vitals' | 'growth' | 'meds' | 'soap' | 'discharge'>('overview');
+  const [detailTab, setDetailTab] = useState<'overview' | 'pediatricFile' | 'vitals' | 'growth' | 'meds' | 'soap' | 'discharge'>('overview');
   
   // Admission Wizard state
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -86,6 +87,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
   // Diagnosis Suggestions state
   const [diagnosisSuggestions, setDiagnosisSuggestions] = useState<any | null>(null);
   const [loadingDiagnosis, setLoadingDiagnosis] = useState(false);
+  const [discardedSuggestionIndices, setDiscardedSuggestionIndices] = useState<number[]>([]);
 
   // SOAP State
   const [soapS, setSoapS] = useState('');
@@ -107,6 +109,21 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
   const [editPastHistory, setEditPastHistory] = useState('');
   const [editInternId, setEditInternId] = useState('');
   const [editStatus, setEditStatus] = useState<'stable' | 'followup' | 'critical' | 'discharged'>('stable');
+  const [editUnitId, setEditUnitId] = useState('');
+
+  // Pediatric Schema Fields States
+  const [pedBirthHistory, setPedBirthHistory] = useState('');
+  const [pedNutrition, setPedNutrition] = useState('');
+  const [pedVaccination, setPedVaccination] = useState('');
+  const [pedDevelopment, setPedDevelopment] = useState('');
+
+  const [pedGeneralExam, setPedGeneralExam] = useState('');
+  const [pedRespExam, setPedRespExam] = useState('');
+  const [pedCardioExam, setPedCardioExam] = useState('');
+  const [pedNeuroExam, setPedNeuroExam] = useState('');
+
+  const [pedLabs, setPedLabs] = useState('');
+  const [pedImaging, setPedImaging] = useState('');
 
   // Weight, Height and Head Circumference entry states
   const [newWeight, setNewWeight] = useState('');
@@ -127,7 +144,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
   // Discharge notes
   const [dischargeNotes, setDischargeNotes] = useState('');
 
-  const interns = teamMembers.filter(u => u.role === 'Intern');
+  const interns = teamMembers.filter(u => u.role === 'Intern' && !u.archived && !u.disabled);
 
   // Keep selectedPatient state in sync with the updated patients prop (e.g. after background synchronization)
   React.useEffect(() => {
@@ -138,6 +155,34 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
       }
     }
   }, [patients, selectedPatient?.id]);
+
+  React.useEffect(() => {
+    if (selectedPatient) {
+      setPedBirthHistory(selectedPatient.pediatricHistory?.prenatalBirthHistory || '');
+      setPedNutrition(selectedPatient.pediatricHistory?.feedingNutritionHistory || '');
+      setPedVaccination(selectedPatient.pediatricHistory?.vaccinationStatus || '');
+      setPedDevelopment(selectedPatient.pediatricHistory?.growthDevelopmentalMilestones || '');
+
+      setPedGeneralExam(selectedPatient.pediatricExamination?.generalHydration || '');
+      setPedRespExam(selectedPatient.pediatricExamination?.respiratoryStatus || '');
+      setPedCardioExam(selectedPatient.pediatricExamination?.cardiovascularStatus || '');
+      setPedNeuroExam(selectedPatient.pediatricExamination?.abdominalNeurological || '');
+
+      setPedLabs(selectedPatient.pediatricInvestigations?.laboratoryWork || '');
+      setPedImaging(selectedPatient.pediatricInvestigations?.radiologyImaging || '');
+    } else {
+      setPedBirthHistory('');
+      setPedNutrition('');
+      setPedVaccination('');
+      setPedDevelopment('');
+      setPedGeneralExam('');
+      setPedRespExam('');
+      setPedCardioExam('');
+      setPedNeuroExam('');
+      setPedLabs('');
+      setPedImaging('');
+    }
+  }, [selectedPatient?.id]);
 
   // Smart BNF dosage auto-calculator side-effect
   React.useEffect(() => {
@@ -270,6 +315,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
     setEditPastHistory(selectedPatient.pastHistory || '');
     setEditInternId(selectedPatient.assignedInternId || 'unassigned');
     setEditStatus(selectedPatient.status);
+    setEditUnitId(selectedPatient.unitId || 'unit-peds');
     setIsEditingPatient(true);
   };
 
@@ -282,6 +328,8 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
     }
 
     const assignedIntern = teamMembers.find(u => u.id === editInternId);
+    const oldUnit = selectedPatient.unitId || 'unit-peds';
+    const hasTransfer = oldUnit !== editUnitId;
 
     const updates: Partial<Patient> = {
       name: editName,
@@ -295,12 +343,22 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
       assignedInternId: editInternId || 'unassigned',
       assignedInternName: assignedIntern ? assignedIntern.name : 'غير معين',
       status: editStatus,
+      unitId: editUnitId,
       updatedAt: Date.now()
     };
 
     onUpdatePatient(selectedPatient.id, updates);
     setSelectedPatient({ ...selectedPatient, ...updates } as Patient);
-    onAddAuditLog('تعديل الملف الطبي للمريض', `تم تحديث الملف الطبي وتفاصيل الطفل المريض ${editName} (سرير ${editBed}) بواسطة ${currentUser.name}.`);
+    
+    if (hasTransfer) {
+      const srcUnitObj = units.find(u => u.id === oldUnit);
+      const destUnitObj = units.find(u => u.id === editUnitId);
+      const srcLabel = srcUnitObj ? (lang === 'ar' ? (srcUnitObj.nameAr || srcUnitObj.name) : srcUnitObj.name) : oldUnit;
+      const destLabel = destUnitObj ? (lang === 'ar' ? (destUnitObj.nameAr || destUnitObj.name) : destUnitObj.name) : editUnitId;
+      onAddAuditLog('تحويل مريض بين الأقسام', `تم نقل وتحويل الطفل المريض ${editName} من قسم (${srcLabel}) إلى قسم (${destLabel}) بواسطة ${currentUser.name}.`);
+    } else {
+      onAddAuditLog('تعديل الملف الطبي للمريض', `تم تحديث الملف الطبي وتفاصيل الطفل المريض ${editName} (سرير ${editBed}) بواسطة ${currentUser.name}.`);
+    }
     setIsEditingPatient(false);
   };
 
@@ -393,6 +451,33 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
     }
   };
 
+  const handleSavePediatricFile = () => {
+    if (!selectedPatient) return;
+    const updates = {
+      pediatricHistory: {
+        prenatalBirthHistory: pedBirthHistory,
+        feedingNutritionHistory: pedNutrition,
+        vaccinationStatus: pedVaccination,
+        growthDevelopmentalMilestones: pedDevelopment
+      },
+      pediatricExamination: {
+        generalHydration: pedGeneralExam,
+        respiratoryStatus: pedRespExam,
+        cardiovascularStatus: pedCardioExam,
+        abdominalNeurological: pedNeuroExam
+      },
+      pediatricInvestigations: {
+        laboratoryWork: pedLabs,
+        radiologyImaging: pedImaging
+      },
+      updatedAt: Date.now()
+    };
+    onUpdatePatient(selectedPatient.id, updates);
+    setSelectedPatient({ ...selectedPatient, ...updates });
+    onAddAuditLog('تحديث ملف الأطفال التخصصي', `تم تحديث وحفظ بيانات التقييم التخصصي للأطفال للمريض ${selectedPatient.name}.`);
+    alert(isEn ? "Pediatric Clinical Schema saved successfully!" : "تم حفظ وتوثيق نموذج تقييم الأطفال بنجاح!");
+  };
+
   // Trigger Gemini Diagnosis Suggestions
   const handleDiagnosisSuggestions = async () => {
     if (!selectedPatient) return;
@@ -410,6 +495,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
       if (response.ok) {
         const data = await response.json();
         setDiagnosisSuggestions(data);
+        setDiscardedSuggestionIndices([]);
       }
     } catch (e) {
       console.error('Error suggesting diagnosis', e);
@@ -776,6 +862,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
             <div className="flex border-b border-slate-100 overflow-x-auto gap-1 mt-4">
               {[
                 { id: 'overview', label: t.tabOverview, icon: BookOpen },
+                { id: 'pediatricFile', label: isEn ? "Pediatric Schema" : "التقييم التخصصي للأطفال", icon: Sparkles },
                 { id: 'vitals', label: t.tabVitals, icon: Activity },
                 { id: 'growth', label: t.tabGrowth, icon: Baby },
                 { id: 'meds', label: t.tabMeds, icon: Pill },
@@ -839,7 +926,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
                   </div>
 
                   {/* AI Diagnosis Suggestions Box */}
-                  {diagnosisSuggestions && (
+                  {diagnosisSuggestions && diagnosisSuggestions.suggestions?.some((_: any, idx: number) => !discardedSuggestionIndices.includes(idx)) && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -847,31 +934,50 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
                     >
                       <h3 className="text-xs font-bold text-indigo-800 flex items-center gap-1.5">
                         <Sparkles className="w-4 h-4 text-indigo-500 fill-indigo-100" />
-                        التشخيصات التفريقية المقترحة بالذكاء الاصطناعي
+                        {isEn ? "AI-Suggested Differential Diagnoses" : "التشخيصات التفريقية المقترحة بالذكاء الاصطناعي"}
                       </h3>
                       <div className="space-y-3">
-                        {diagnosisSuggestions.suggestions?.map((item: any, idx: number) => (
-                          <div key={idx} className="bg-white p-3 rounded-xl border border-indigo-100 space-y-1 text-xs">
-                            <div className="flex justify-between items-center">
-                              <span className="font-bold text-slate-800">{item.diagnosisName}</span>
-                              <span className="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-md">{item.probability}%</span>
-                            </div>
-                            <p className="text-slate-600 text-[11px] leading-relaxed"><span className="font-semibold text-slate-800">العوامل الداعمة:</span> {item.supportingFactors}</p>
-                            <p className="text-indigo-800 text-[11px] leading-relaxed font-medium"><span className="font-semibold">الخطوة التشخيصية التالية:</span> {item.nextDiagnosticStep}</p>
-                            
-                            <button 
-                              onClick={() => {
-                                onUpdatePatient(selectedPatient.id, { diagnosis: item.diagnosisName, updatedAt: Date.now() });
-                                setSelectedPatient({ ...selectedPatient, diagnosis: item.diagnosisName });
-                                onAddAuditLog('تحديث التشخيص', `تم اختيار واعتماد تشخيص (${item.diagnosisName}) للطفل المريض ${selectedPatient.name}.`);
-                                setDiagnosisSuggestions(null);
-                              }}
-                              className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1 rounded-md mt-2 transition-all block w-max"
-                            >
-                              تثبيت هذا التشخيص للمريض
-                            </button>
-                          </div>
-                        ))}
+                        {diagnosisSuggestions.suggestions
+                          ?.map((item: any, idx: number) => {
+                            if (discardedSuggestionIndices.includes(idx)) return null;
+
+                            return (
+                              <div key={idx} className="bg-white p-4 rounded-xl border border-indigo-100 space-y-2 text-xs">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-bold text-slate-800">{item.diagnosisName}</span>
+                                  <span className="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-md">{item.probability}%</span>
+                                </div>
+                                <p className="text-slate-600 text-[11px] leading-relaxed">
+                                  <span className="font-bold text-slate-800">{isEn ? "Supporting Factors:" : "العوامل الداعمة:"}</span> {item.supportingFactors}
+                                </p>
+                                <p className="text-indigo-800 text-[11px] leading-relaxed font-medium">
+                                  <span className="font-bold text-slate-800">{isEn ? "Next Diagnostic Step:" : "الخطوة التشخيصية التالية:"}</span> {item.nextDiagnosticStep}
+                                </p>
+                                
+                                <div className="flex gap-2 pt-2 border-t border-slate-100">
+                                  <button 
+                                    onClick={() => {
+                                      onUpdatePatient(selectedPatient.id, { diagnosis: item.diagnosisName, updatedAt: Date.now() });
+                                      setSelectedPatient({ ...selectedPatient, diagnosis: item.diagnosisName });
+                                      onAddAuditLog('تحديث التشخيص', `تم اختيار واعتماد تشخيص (${item.diagnosisName}) للطفل المريض ${selectedPatient.name}.`);
+                                      setDiagnosisSuggestions(null);
+                                    }}
+                                    className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg transition-all"
+                                  >
+                                    {isEn ? "Approve & Apply" : "تأكيد واعتماد التشخيص"}
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      setDiscardedSuggestionIndices([...discardedSuggestionIndices, idx]);
+                                    }}
+                                    className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold px-3 py-1.5 rounded-lg transition-all"
+                                  >
+                                    {isEn ? "Discard" : "تجاهل"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
                       </div>
                     </motion.div>
                   )}
@@ -980,6 +1086,265 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
                       </div>
                     );
                   })()}
+                </div>
+              )}
+
+              {/* Tab: Pediatric Schema */}
+              {detailTab === 'pediatricFile' && (
+                <div className="space-y-6">
+                  {/* Title and Save button banner */}
+                  <div className="flex justify-between items-center bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-blue-500 fill-blue-100 animate-pulse" />
+                        {isEn ? "Personalized Pediatric File" : "النموذج التخصصي لتقييم وصحة الأطفال"}
+                      </h3>
+                      <p className="text-[10px] text-slate-500 font-medium">
+                        {isEn ? "Standard schema to focus history, examination, investigations, and differential diagnosis." : "النموذج القياسي الموحد للقصة المرضية والفحص السريري الموجه لتشخيص أمراض الأطفال."}
+                      </p>
+                    </div>
+                    <button 
+                      onClick={handleSavePediatricFile}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      {isEn ? "Save Pediatric File" : "حفظ ملف الطفل"}
+                    </button>
+                  </div>
+
+                  {/* Section 1: History */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-slate-700 border-r-4 border-blue-600 pr-2 pl-2">
+                      {isEn ? "1. Focused Pediatric History" : "1. أخذ القصة المرضية المركزة للأطفال"}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Prenatal & Birth History */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          🍼 {isEn ? "Prenatal & Birth History:" : "القصة الحملية والولادية:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Gestational age, mode of delivery, complications, birth weight, NICU stay." : "عمر الحمل، طريقة الولادة، الاختلاطات، وزن الولادة، البقاء في العناية المركزة لحديثي الولادة."}
+                        </span>
+                        <textarea 
+                          value={pedBirthHistory}
+                          onChange={(e) => setPedBirthHistory(e.target.value)}
+                          placeholder={isEn ? "e.g., Term, SVD, APGAR 9/10, no NICU stay, birth weight 3.2kg." : "مثال: ولادة بتمام الحمل، طبيعية مهبلية، الوزن 3.2 كغ، بكاء مباشر، لا يوجد دخول للعناية."}
+                          className="w-full h-24 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Feeding & Nutrition */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          🥦 {isEn ? "Feeding & Nutritional History:" : "القصة التغذوية ونمو الطفل:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Breastfeeding duration, formula, solid food introduction, recent appetite." : "مدة الرضاعة الطبيعية، الحليب الاصطناعي، إدخال الأطعمة الصلبة، الشهية والنشاط الحالي."}
+                        </span>
+                        <textarea 
+                          value={pedNutrition}
+                          onChange={(e) => setPedNutrition(e.target.value)}
+                          placeholder={isEn ? "e.g., Exclusively breastfed for 6 months, solid food tolerated well." : "مثال: رضاعة طبيعية مطلقة لـ 6 أشهر، تم إدخال الأغذية الصلبة بسلاسة، الشهية جيدة."}
+                          className="w-full h-24 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Vaccination Status */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          💉 {isEn ? "Immunization & Vaccination Status:" : "الحالة التلقيحية والتحصين:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Is vaccination up-to-date according to national schedule?" : "هل الطفل مستوفٍ لكافة تطعيماته حسب جدول اللقاحات الوطني؟"}
+                        </span>
+                        <textarea 
+                          value={pedVaccination}
+                          onChange={(e) => setPedVaccination(e.target.value)}
+                          placeholder={isEn ? "e.g., Up-to-date with all vaccines, card verified." : "مثال: مستوفٍ للقاحات حتى سن السنتين، تم التحقق من دفتر اللقاح."}
+                          className="w-full h-20 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Developmental Milestones */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          🏃 {isEn ? "Growth & Developmental Milestones:" : "التطور الروحي الحركي والمعالم:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Motor skills, social, speech, language milestones matching current age." : "المهارات الحركية الكبرى والدقيقة، الكلام واللغة والاندماج الاجتماعي الملائم للعمر."}
+                        </span>
+                        <textarea 
+                          value={pedDevelopment}
+                          onChange={(e) => setPedDevelopment(e.target.value)}
+                          placeholder={isEn ? "e.g., Smiled at 2 months, sat at 6 months, walked at 12 months." : "مثال: مشى بعمر سنة، ينطق 5 كلمات واضحة، تفاعل اجتماعي سليم ملائم للعمر."}
+                          className="w-full h-20 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 2: Examination */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-slate-700 border-r-4 border-indigo-600 pr-2 pl-2">
+                      {isEn ? "2. Focused Physical Examination" : "2. الفحص السريري الموجه للأطفال"}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* General & Hydration */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          💧 {isEn ? "General Appearance & Hydration:" : "المظهر العام وحالة الإماهة:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Alertness, hydration parameters (skin turgor, eyes, fontanelle, tears)." : "مستوى الوعي والنشاط، علامات الجفاف (مرونة الجلد، رطوبة الأغشية، العيون الغائرة، اليافوخ)."}
+                        </span>
+                        <textarea 
+                          value={pedGeneralExam}
+                          onChange={(e) => setPedGeneralExam(e.target.value)}
+                          placeholder={isEn ? "e.g., Active, well-hydrated, pink, no sunken eyes, good skin turgor." : "مثال: واعي ونشط، أغشية رطبة، مرونة الجلد طبيعية، اليافوخ مستوٍ، لا يوجد علامات جفاف."}
+                          className="w-full h-24 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Respiratory distress */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          🫁 {isEn ? "Chest & Respiratory Status:" : "الجهاز التنفسي وفحص الصدر:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Work of breathing, subcostal retractions, grunting, nasal flaring, air entry." : "الجهد التنفسي، السحب الوربي أو تحت الضلعي، الأنين، غرف الأنف، التناظر والتهوية."}
+                        </span>
+                        <textarea 
+                          value={pedRespExam}
+                          onChange={(e) => setPedRespExam(e.target.value)}
+                          placeholder={isEn ? "e.g., No retractions, normal vesicular breath sounds, no wheeze or grunting." : "مثال: لا يوجد سحب صدر، أصوات تنفس حويصلية طبيعية، غياب الأزيز والأنين الجناحي."}
+                          className="w-full h-24 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Cardiovascular */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          ❤️ {isEn ? "Cardiovascular & Perfusion:" : "جهاز الدوران والإرواء المحيطي:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Heart rate/rhythm, murmurs, capillary refill time (CRT), peripheral pulses." : "أصوات وجيشان القلب، وجود النفخات، زمن الامتلاء الشعري (CRT)، دقة النبض المحيطي."}
+                        </span>
+                        <textarea 
+                          value={pedCardioExam}
+                          onChange={(e) => setPedCardioExam(e.target.value)}
+                          placeholder={isEn ? "e.g., Normal S1 S2, no murmurs, CRT < 2 seconds, pulses palpable." : "مثال: أصوات قلب واضحة، غياب النفخات، زمن الامتلاء الشعري < 2 ثانية، النبض المحيطي ممتلئ."}
+                          className="w-full h-20 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Abdomen / Neuro */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          🧠 {isEn ? "Abdomen & Neurological Status:" : "فحص البطن والجملة العصبية:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Abdominal distension, tenderness, bowel sounds, fontanelle tension, tone, reflexes." : "انتفاخ البطن، مرونة جدار البطن، الأصوات المعوية، توتر اليافوخ، المقوية العضلية والمنعكسات."}
+                        </span>
+                        <textarea 
+                          value={pedNeuroExam}
+                          onChange={(e) => setPedNeuroExam(e.target.value)}
+                          placeholder={isEn ? "e.g., Soft, non-distended, flat fontanelle, normal neonatal reflexes." : "مثال: البطن لين غير مضض، غياب الدفاع العضلي، يافوخ منبسط، مقوية عضلية متناظرة وسليمة."}
+                          className="w-full h-20 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Investigations */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-slate-700 border-r-4 border-emerald-600 pr-2 pl-2">
+                      {isEn ? "3. Targeted Pediatric Investigations" : "3. الاستقصاءات والفحوصات المستهدفة"}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Laboratory */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          🧪 {isEn ? "Laboratory Work & Blood Gas:" : "التحاليل المخبرية والغازات:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "CBC, CRP, blood gas, electrolytes, cultures, urine routine." : "تعداد الكريات، البروتين الارتكاسي CRP، شوارد وغازات الدم، الزراعة الدموية والبولية."}
+                        </span>
+                        <textarea 
+                          value={pedLabs}
+                          onChange={(e) => setPedLabs(e.target.value)}
+                          placeholder={isEn ? "e.g., WBC 11.2, CRP 5.0, pH 7.39, blood culture pending." : "مثال: الكريات البيضاء 11.2، CRP طبيعي، الغازات طبيعية، زراعة الدم قيد الانتظار."}
+                          className="w-full h-24 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Imaging */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-100 space-y-2 text-right">
+                        <label className="text-[10px] text-slate-500 font-extrabold uppercase tracking-wider block">
+                          📸 {isEn ? "Radiology & Diagnostic Imaging:" : "التصوير والتشخيص الشعاعي:"}
+                        </label>
+                        <span className="text-[9px] text-slate-400 block font-semibold">
+                          {isEn ? "Chest X-Ray, Abdominal Ultrasound, Echo, Head US." : "الأشعة السينية للصدر، السونار البطني، إيكو القلب، إيكو الدماغ عبر اليافوخ."}
+                        </span>
+                        <textarea 
+                          value={pedImaging}
+                          onChange={(e) => setPedImaging(e.target.value)}
+                          placeholder={isEn ? "e.g., Chest X-Ray shows hyperinflation but no focal consolidation." : "مثال: صورة الصدر تبين فرط وضاحية دون وجود كثافات ارتشاحية بؤرية."}
+                          className="w-full h-24 p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 4: Differential Diagnosis Schema */}
+                  <div className="bg-slate-50/70 p-5 rounded-2xl border border-slate-100 space-y-4 text-right">
+                    <h4 className="text-xs font-bold text-slate-700 border-r-4 border-amber-600 pr-2 pl-2">
+                      📋 {isEn ? "4. Pediatric Differential Diagnosis Checklist Helper" : "4. دليل الفحص والتشخيص التفريقي التخصصي للأطفال"}
+                    </h4>
+                    <span className="text-[11px] text-slate-500 font-medium block">
+                      {isEn ? "Review common pediatric emergencies and clinical criterion checklists:" : "تحقق من التشخيصات التفريقية الأكثر شيوعاً في أقسام تنويم الأطفال سريرياً:"}
+                    </span>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Bronchiolitis vs Asthma */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-100 space-y-2">
+                        <span className="text-[11px] font-black text-blue-600 block">🫁 {isEn ? "Wheezing Child" : "أزيز الصدر الحاد"}</span>
+                        <div className="space-y-1 text-[10px] text-slate-600 font-semibold">
+                          <p className="border-b border-slate-50 pb-1"><span className="text-slate-800 font-bold">التهاب القصيبات (Bronchiolitis)</span>: عمر &lt; سنتين، سيلان أنف قبله، سحب وربي، صعوبة رضاعة، سببه غالباً RSV.</p>
+                          <p><span className="text-slate-800 font-bold">ربو طفلي (Asthma)</span>: قصة تكرر الأزيز، قصة عائلية للتحسس، استجابة ممتازة لموسعات الشعب الهوائية.</p>
+                        </div>
+                      </div>
+
+                      {/* Gastroenteritis vs Appendicitis */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-100 space-y-2">
+                        <span className="text-[11px] font-black text-rose-600 block">🤢 {isEn ? "Vomiting & Abdomen" : "القيء والألم البطني"}</span>
+                        <div className="space-y-1 text-[10px] text-slate-600 font-semibold">
+                          <p className="border-b border-slate-50 pb-1"><span className="text-slate-800 font-bold">نزلة معوية (Gastroenteritis)</span>: إسهال متكرر مع استفراغ، ألم بطني منتشر ومغص، قصة تعرض لعدوى.</p>
+                          <p><span className="text-slate-800 font-bold">التهاب زائدة (Appendicitis)</span>: ألم يبدأ حول السرة وينتقل للحفرة الحرقفية اليمنى، إقياء تالٍ للألم، ترفع حروري خفيف، مضض ارتدادي بؤري.</p>
+                        </div>
+                      </div>
+
+                      {/* Meningitis vs UTI */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-100 space-y-2">
+                        <span className="text-[11px] font-black text-amber-600 block">🧠 {isEn ? "Fever & Irritability" : "الحرارة والهيجان المجهول"}</span>
+                        <div className="space-y-1 text-[10px] text-slate-600 font-semibold">
+                          <p className="border-b border-slate-50 pb-1"><span className="text-slate-800 font-bold">التهاب سحايا (Meningitis)</span>: صلابة نقرة، توتر اليافوخ لدى الرضع، بكاء نبرة عالية، تعثر رديء للوعي.</p>
+                          <p><span className="text-slate-800 font-bold">إنتان بولي (UTI)</span>: ترفع حروري مجهول السبب، رفض رضاعة، خمول، بول كريه الرائحة، تشخص بالتحليل والزرع البولي.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Double save validation prompt */}
+                  <div className="flex justify-end pt-2">
+                    <button 
+                      onClick={handleSavePediatricFile}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      {isEn ? "Save Pediatric File Assessment" : "تأكيد وتوثيق ملف الطفل الطبي"}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -2282,6 +2647,25 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
                     ))}
                   </select>
                 </div>
+
+                {units && units.length > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-blue-600 font-bold block">
+                      {isEn ? "Transfer Clinical Unit / Department" : "تحويل المريض إلى قسم طبي آخر"}
+                    </label>
+                    <select
+                      value={editUnitId}
+                      onChange={(e) => setEditUnitId(e.target.value)}
+                      className="w-full px-3 py-2 bg-blue-50/50 border border-blue-100 rounded-xl text-xs font-semibold focus:outline-none text-blue-950"
+                    >
+                      {units.map((u: any) => (
+                        <option key={u.id} value={u.id}>
+                          🏥 {lang === 'ar' ? (u.nameAr || u.name) : u.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="space-y-1">
                   <label className="text-[10px] text-slate-500 font-bold block">الشكوى السريرية الأساسية (Symptoms) *</label>
