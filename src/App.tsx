@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { User, Patient, Task, SbarHandover, ClinicSlot, ChatMessage, AuditLogEntry, Alert, UserRole, getRoleLabel, getRoleColor, hasPermission } from './types';
+import { User, Patient, Task, SbarHandover, ClinicSlot, ChatMessage, AuditLogEntry, Alert, UserRole, getRoleLabel, getRoleColor, hasPermission, setDynamicPermissions } from './types';
 import { Language, translations } from './utils/translations';
 import { localDB, SyncQueueAction } from './utils/localDB';
 import Dashboard from './components/Dashboard';
@@ -48,6 +48,8 @@ export default function App() {
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [teamMembers, setTeamMembers] = useState<User[]>([]);
+  const [units, setUnits] = useState<any[]>(localDB.getUnits());
+  const [activeUnitId, setActiveUnitId] = useState<string>(localStorage.getItem('coreward_active_unit_id') || 'unit-peds');
 
   // Connectivity & Sync Status
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -108,7 +110,21 @@ export default function App() {
     setAuditLog(localDB.getAuditLog());
     setAlerts(localDB.getAlerts());
     setTeamMembers(localDB.getTeamMembers());
+    setUnits(localDB.getUnits());
+
+    const cachedPerms = localDB.getRolePermissions();
+    if (cachedPerms && cachedPerms.length > 0) {
+      const obj: any = {};
+      cachedPerms.forEach((item: any) => {
+        obj[item.id] = item.permissions;
+      });
+      setDynamicPermissions(obj);
+    }
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('coreward_active_unit_id', activeUnitId);
+  }, [activeUnitId]);
 
   // Run automatic background sync every 15 seconds if online, and immediately on mount/login
   useEffect(() => {
@@ -176,6 +192,19 @@ export default function App() {
         localDB.saveAlerts(data.alerts);
         localDB.saveTeamMembers(data.users);
         
+        if (data.units) {
+          localDB.saveUnits(data.units);
+          setUnits(data.units);
+        }
+        if (data.rolePermissions) {
+          localDB.saveRolePermissions(data.rolePermissions);
+          const obj: any = {};
+          data.rolePermissions.forEach((item: any) => {
+            obj[item.id] = item.permissions;
+          });
+          setDynamicPermissions(obj);
+        }
+
         // Clear sync queue locally
         localDB.clearSyncQueue();
         
@@ -320,6 +349,79 @@ export default function App() {
     }
   };
 
+  const handleUpdateStaffStatus = async (userId: string, updates: any) => {
+    setRegError(null);
+    setRegSuccess(false);
+
+    try {
+      const response = await fetch(`/api/users/${userId}/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': encodeURIComponent(currentUser?.id || ''),
+          'x-user-role': encodeURIComponent(currentUser?.role || ''),
+          'x-user-name': encodeURIComponent(currentUser?.name || '')
+        },
+        body: JSON.stringify(updates)
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setRegSuccess(true);
+        setTeamMembers(data.users);
+        localDB.saveTeamMembers(data.users);
+      } else {
+        setRegError(data.error || 'فشلت عملية التحديث');
+      }
+    } catch (err) {
+      setRegError('فشل الاتصال بالخادم لتحديث الكادر السريري.');
+    }
+  };
+
+  const handleResetDemoData = async () => {
+    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من رغبتك في إعادة تعيين جميع البيانات التجريبية وحذف كافة المرضى والمستندات؟' : 'Are you sure you want to reset all demo data and delete all patients, tasks, handovers, clinic slots, chat messages, and alerts?')) {
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/admin/reset-demo', {
+        method: 'POST',
+        headers: {
+          'x-user-id': encodeURIComponent(currentUser?.id || ''),
+          'x-user-role': encodeURIComponent(currentUser?.role || ''),
+          'x-user-name': encodeURIComponent(currentUser?.name || '')
+        }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        // Clear locally cached data
+        localDB.savePatients([]);
+        localDB.saveTasks([]);
+        localDB.saveHandovers([]);
+        localDB.saveClinicSlots([]);
+        localDB.saveChatMessages([]);
+        localDB.saveAlerts([]);
+        
+        // Update state
+        setPatients([]);
+        setTasks([]);
+        setHandovers([]);
+        setClinicSlots([]);
+        setChatMessages([]);
+        setAlerts([]);
+        
+        setRegSuccess(true);
+        setIsRegOpen(false);
+        triggerSync();
+        alert(lang === 'ar' ? '✓ تم إعادة تعيين النظام بنجاح!' : '✓ Demo data reset successful!');
+      } else {
+        alert(data.error || 'فشلت عملية إعادة التعيين');
+      }
+    } catch (err) {
+      alert(lang === 'ar' ? 'فشل الاتصال بالخادم لإعادة التعيين' : 'Failed to connect to server for reset');
+    }
+  };
+
   // --- Mutators called by child components (Offline-First Wrapper) ---
 
   const handleAddAuditLogLocal = (action: string, details: string) => {
@@ -339,10 +441,14 @@ export default function App() {
   };
 
   const handleAddPatient = (patient: Patient) => {
-    const updated = [patient, ...patients];
+    const isDirector = currentUser?.role === 'Director';
+    const currentActiveUnitId = isDirector ? activeUnitId : (currentUser?.assignedUnitId || 'unit-peds');
+    const patientWithUnit = { ...patient, unitId: currentActiveUnitId };
+
+    const updated = [patientWithUnit, ...patients];
     setPatients(updated);
     localDB.savePatients(updated);
-    localDB.queueSyncAction('patients', 'add', patient.id, patient);
+    localDB.queueSyncAction('patients', 'add', patient.id, patientWithUnit);
     triggerSync();
   };
 
@@ -355,10 +461,14 @@ export default function App() {
   };
 
   const handleAddTask = (task: Task) => {
-    const updated = [task, ...tasks];
+    const isDirector = currentUser?.role === 'Director';
+    const currentActiveUnitId = isDirector ? activeUnitId : (currentUser?.assignedUnitId || 'unit-peds');
+    const taskWithUnit = { ...task, unitId: currentActiveUnitId };
+
+    const updated = [taskWithUnit, ...tasks];
     setTasks(updated);
     localDB.saveTasks(updated);
-    localDB.queueSyncAction('tasks', 'add', task.id, task);
+    localDB.queueSyncAction('tasks', 'add', task.id, taskWithUnit);
     triggerSync();
   };
 
@@ -379,10 +489,14 @@ export default function App() {
   };
 
   const handleAddHandover = (handover: SbarHandover) => {
-    const updated = [handover, ...handovers];
+    const isDirector = currentUser?.role === 'Director';
+    const currentActiveUnitId = isDirector ? activeUnitId : (currentUser?.assignedUnitId || 'unit-peds');
+    const handoverWithUnit = { ...handover, unitId: currentActiveUnitId };
+
+    const updated = [handoverWithUnit, ...handovers];
     setHandovers(updated);
     localDB.saveHandovers(updated);
-    localDB.queueSyncAction('handovers', 'add', handover.id, handover);
+    localDB.queueSyncAction('handovers', 'add', handover.id, handoverWithUnit);
     triggerSync();
   };
 
@@ -395,10 +509,14 @@ export default function App() {
   };
 
   const handleAddSlot = (slot: ClinicSlot) => {
-    const updated = [slot, ...clinicSlots];
+    const isDirector = currentUser?.role === 'Director';
+    const currentActiveUnitId = isDirector ? activeUnitId : (currentUser?.assignedUnitId || 'unit-peds');
+    const slotWithUnit = { ...slot, unitId: currentActiveUnitId };
+
+    const updated = [slotWithUnit, ...clinicSlots];
     setClinicSlots(updated);
     localDB.saveClinicSlots(updated);
-    localDB.queueSyncAction('clinicSlots', 'add', slot.id, slot);
+    localDB.queueSyncAction('clinicSlots', 'add', slot.id, slotWithUnit);
     triggerSync();
   };
 
@@ -522,13 +640,22 @@ export default function App() {
 
   // Active Screen Selector helper
   const renderActiveComponent = () => {
+    const isDirector = currentUser?.role === 'Director';
+    const currentActiveUnitId = isDirector ? activeUnitId : (currentUser?.assignedUnitId || 'unit-peds');
+
+    // Filter data to only match the selected clinical unit
+    const unitPatients = patients.filter(p => !p.unitId || p.unitId === currentActiveUnitId);
+    const unitTasks = tasks.filter(t => !t.unitId || t.unitId === currentActiveUnitId);
+    const unitHandovers = handovers.filter(h => !h.unitId || h.unitId === currentActiveUnitId);
+    const unitClinicSlots = clinicSlots.filter(s => !s.unitId || s.unitId === currentActiveUnitId);
+
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard patients={patients} tasks={tasks} handovers={handovers} onNavigate={setActiveTab} currentUser={currentUser} lang={lang} />;
+        return <Dashboard patients={unitPatients} tasks={unitTasks} handovers={unitHandovers} onNavigate={setActiveTab} currentUser={currentUser} lang={lang} />;
       case 'ward':
         return (
           <Ward 
-            patients={patients} 
+            patients={unitPatients} 
             teamMembers={teamMembers} 
             currentUser={currentUser} 
             onAddPatient={handleAddPatient} 
@@ -540,8 +667,8 @@ export default function App() {
       case 'tasks':
         return (
           <Tasks 
-            tasks={tasks} 
-            patients={patients} 
+            tasks={unitTasks} 
+            patients={unitPatients} 
             currentUser={currentUser} 
             onAddTask={handleAddTask} 
             onUpdateTask={handleUpdateTask} 
@@ -553,8 +680,8 @@ export default function App() {
       case 'handover':
         return (
           <SbarHandoverComponent 
-            handovers={handovers} 
-            patients={patients} 
+            handovers={unitHandovers} 
+            patients={unitPatients} 
             currentUser={currentUser} 
             onAddHandover={handleAddHandover} 
             onUpdateHandover={handleUpdateHandover}
@@ -565,7 +692,7 @@ export default function App() {
       case 'clinic':
         return (
           <ClinicQueue 
-            clinicSlots={clinicSlots} 
+            clinicSlots={unitClinicSlots} 
             currentUser={currentUser} 
             onAddSlot={handleAddSlot} 
             onUpdateSlot={handleUpdateSlot} 
@@ -579,7 +706,7 @@ export default function App() {
       case 'audit':
         return <AuditLog auditLog={auditLog} currentUser={currentUser} lang={lang} />;
       default:
-        return <Dashboard patients={patients} tasks={tasks} handovers={handovers} onNavigate={setActiveTab} currentUser={currentUser} lang={lang} />;
+        return <Dashboard patients={unitPatients} tasks={unitTasks} handovers={unitHandovers} onNavigate={setActiveTab} currentUser={currentUser} lang={lang} />;
     }
   };
 
@@ -658,6 +785,46 @@ export default function App() {
 
         {/* Right Side: Active User Account panel */}
         <div className="flex items-center gap-3">
+          {/* Unit Switcher or Assigned Unit Badge */}
+          {currentUser && (
+            <div className="flex items-center gap-1.5 bg-slate-100 border border-slate-200/60 p-1.5 rounded-xl">
+              {currentUser.role === 'Director' ? (
+                <select
+                  value={activeUnitId}
+                  onChange={(e) => setActiveUnitId(e.target.value)}
+                  className="bg-transparent border-none text-xs font-black text-blue-700 focus:ring-0 cursor-pointer outline-none px-1"
+                >
+                  {units && units.length > 0 ? (
+                    units.map((u: any) => (
+                      <option key={u.id} value={u.id} className="text-slate-800">
+                        🏥 {lang === 'ar' ? u.nameAr : u.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="unit-peds" className="text-slate-800">🏥 جناح الأطفال</option>
+                      <option value="unit-cardio" className="text-slate-800">🏥 جناح أمراض القلب</option>
+                      <option value="unit-icu" className="text-slate-800">🏥 جناح العناية المركزة</option>
+                    </>
+                  )}
+                </select>
+              ) : (
+                <div className="text-xs font-black text-slate-700 flex items-center gap-1 px-2 py-0.5">
+                  <span>🏥</span>
+                  <span>
+                    {(() => {
+                      const myUnitId = currentUser.assignedUnitId || 'unit-peds';
+                      const matchedUnit = units?.find((u: any) => u.id === myUnitId);
+                      return matchedUnit 
+                        ? (lang === 'ar' ? matchedUnit.nameAr : matchedUnit.name) 
+                        : (lang === 'ar' ? 'جناح الأطفال' : 'Pediatric Ward');
+                    })()}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Language Switcher */}
           <button 
             onClick={() => setLang(l => l === 'ar' ? 'en' : 'ar')}
@@ -889,31 +1056,92 @@ export default function App() {
                 </form>
               ) : (
                 <div className="space-y-4 text-xs">
-                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                  <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
                     {teamMembers.map((member) => {
                       const isMainAdmin = member.id === 'u-admin';
                       const isSelf = member.id === currentUser?.id;
+                      if (member.archived) return null;
+
                       return (
                         <div 
                           key={member.id} 
-                          className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-700/60 hover:border-slate-600 transition-colors"
+                          className={`p-3 rounded-xl bg-slate-900/60 border border-slate-700/60 space-y-3 ${
+                            member.disabled ? 'opacity-50 border-amber-500/20' : 'hover:border-slate-600'
+                          }`}
                         >
-                          <div className="space-y-0.5">
-                            <span className="font-bold text-white text-xs block">{member.name} {isSelf && <span className="text-[10px] text-blue-400 font-normal">(أنت)</span>}</span>
-                            <span className="text-[10px] text-slate-400 block">{member.email}</span>
-                            <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${getRoleColor(member.role)}`}>
-                              {getRoleLabel(member.role, lang)}
-                            </span>
+                          <div className="flex items-start justify-between">
+                            <div className="space-y-0.5">
+                              <span className="font-bold text-white text-xs block">
+                                {member.name} {isSelf && <span className="text-[10px] text-blue-400 font-normal">(أنت)</span>}
+                                {member.disabled && <span className="text-[10px] text-amber-400 font-black mr-2">(معطل)</span>}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">{member.email}</span>
+                            </div>
                           </div>
 
                           {!isMainAdmin && !isSelf && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteStaff(member.id)}
-                              className="px-2.5 py-1.5 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg border border-red-500/20 transition-all font-semibold cursor-pointer"
-                            >
-                              {lang === 'ar' ? 'حذف الكادر' : 'Remove'}
-                            </button>
+                            <div className="space-y-2 border-t border-slate-800/80 pt-2.5">
+                              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                <div className="space-y-1">
+                                  <label className="text-slate-400 font-bold block">الدور الوظيفي:</label>
+                                  <select
+                                    value={member.role}
+                                    onChange={(e) => handleUpdateStaffStatus(member.id, { role: e.target.value as UserRole })}
+                                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg p-1 text-[10px] focus:outline-none"
+                                  >
+                                    <option value="Intern">امتياز</option>
+                                    <option value="General">طبيب عام</option>
+                                    <option value="Deputy">نائب</option>
+                                    <option value="Specialist">أخصائي</option>
+                                    <option value="Director">مدير قسم</option>
+                                  </select>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-slate-400 font-bold block">القسم المخصص:</label>
+                                  <select
+                                    value={member.assignedUnitId || 'unit-peds'}
+                                    onChange={(e) => handleUpdateStaffStatus(member.id, { assignedUnitId: e.target.value })}
+                                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg p-1 text-[10px] focus:outline-none"
+                                  >
+                                    {units?.map((u: any) => (
+                                      <option key={u.id} value={u.id}>
+                                        {lang === 'ar' ? u.nameAr : u.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end gap-1.5 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateStaffStatus(member.id, { disabled: !member.disabled })}
+                                  className={`px-2 py-1 rounded text-[9px] font-bold border transition-all ${
+                                    member.disabled 
+                                      ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/20 hover:bg-emerald-600 hover:text-white' 
+                                      : 'bg-amber-600/20 text-amber-400 border-amber-500/20 hover:bg-amber-600 hover:text-white'
+                                  }`}
+                                >
+                                  {member.disabled 
+                                    ? (lang === 'ar' ? 'تنشيط الحساب' : 'Enable') 
+                                    : (lang === 'ar' ? 'تعطيل الحساب' : 'Disable')
+                                  }
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (window.confirm(lang === 'ar' ? 'هل أنت متأكد من رغبتك في حذف وأرشفة هذا المستخدم؟' : 'Are you sure you want to archive/remove this user?')) {
+                                      handleUpdateStaffStatus(member.id, { archived: true });
+                                    }
+                                  }}
+                                  className="px-2 py-1 bg-red-600/20 text-red-400 border border-red-500/20 hover:bg-red-600 hover:text-white rounded text-[9px] font-bold transition-all"
+                                >
+                                  {lang === 'ar' ? 'حذف وأرشفة' : 'Archive'}
+                                </button>
+                              </div>
+                            </div>
                           )}
                         </div>
                       );
@@ -928,9 +1156,22 @@ export default function App() {
 
                   {regSuccess && (
                     <div className="p-3 bg-green-950/40 text-green-300 border border-green-900 rounded-xl text-xs font-bold">
-                      ✓ تم إلغاء تفويض وحذف الطبيب بنجاح وتحديث كادر القسم!
+                      ✓ تم تحديث وحفظ بيانات الكادر بنجاح!
                     </div>
                   )}
+
+                  <div className="border-t border-slate-700/60 pt-3.5 mt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={handleResetDemoData}
+                      className="w-full bg-red-600 hover:bg-red-700 text-white text-xs font-black py-2 rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      🧹 {lang === 'ar' ? 'إعادة تهيئة النظام ومسح البيانات' : 'Reset All Clinical Demo Data'}
+                    </button>
+                    <span className="text-[9px] text-slate-500 font-bold block mt-1.5">
+                      * يمسح المرضى والمهام ومحاضر التسليم والعيادات والتنبيهات، ويحتفظ بالطاقم والوحدات.
+                    </span>
+                  </div>
 
                   <div className="flex gap-2 pt-3 border-t border-slate-700">
                     <button 

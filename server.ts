@@ -270,7 +270,7 @@ try {
 async function saveToFirestore(db: any) {
   if (!firestoreDb) return;
   try {
-    const collectionsToSync = ["users", "patients", "tasks", "handovers", "clinicSlots", "chatMessages", "auditLog", "alerts"];
+    const collectionsToSync = ["users", "patients", "tasks", "handovers", "clinicSlots", "chatMessages", "auditLog", "alerts", "units", "rolePermissions"];
     for (const colName of collectionsToSync) {
       const items = db[colName] || [];
       const colRef = collection(firestoreDb, colName);
@@ -309,7 +309,7 @@ async function syncDatabaseWithFirestore() {
   if (!firestoreDb) return;
   console.log("Synchronizing local cache file with Cloud Firestore...");
 
-  const collectionsToSync = ["users", "patients", "tasks", "handovers", "clinicSlots", "chatMessages", "auditLog", "alerts"];
+  const collectionsToSync = ["users", "patients", "tasks", "handovers", "clinicSlots", "chatMessages", "auditLog", "alerts", "units", "rolePermissions"];
   const dbData: any = {};
 
   try {
@@ -366,7 +366,66 @@ setInterval(() => {
 // Helper to read DB
 function readDB() {
   try {
-    return JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+    
+    // Auto-inject missing structural default fields
+    let changed = false;
+    if (!data.units || !Array.isArray(data.units) || data.units.length === 0) {
+      data.units = [
+        { id: "unit-peds", name: "Pediatric Unit (قسم الأطفال)" },
+        { id: "unit-cardio", name: "Cardiology Unit (قسم القلب)" },
+        { id: "unit-icu", name: "ICU (العناية المركزة)" }
+      ];
+      changed = true;
+    }
+    if (!data.rolePermissions || !Array.isArray(data.rolePermissions) || data.rolePermissions.length === 0) {
+      data.rolePermissions = [
+        { id: "Director", permissions: [
+          'manage_users', 'view_patients', 'admit_patients', 'update_vitals', 'write_notes', 'discharge_patients',
+          'create_tasks', 'complete_tasks', 'create_handovers', 'acknowledge_handovers', 'manage_clinic',
+          'send_chat', 'view_audit_log', 'add_alert'
+        ]},
+        { id: "Specialist", permissions: [
+          'manage_users', 'view_patients', 'admit_patients', 'update_vitals', 'write_notes', 'discharge_patients',
+          'create_tasks', 'complete_tasks', 'create_handovers', 'acknowledge_handovers', 'manage_clinic',
+          'send_chat', 'view_audit_log', 'add_alert'
+        ]},
+        { id: "Deputy", permissions: [
+          'manage_users', 'view_patients', 'admit_patients', 'update_vitals', 'write_notes', 'discharge_patients',
+          'create_tasks', 'complete_tasks', 'create_handovers', 'acknowledge_handovers', 'manage_clinic',
+          'send_chat', 'view_audit_log', 'add_alert'
+        ]},
+        { id: "General", permissions: [
+          'view_patients', 'admit_patients', 'update_vitals', 'write_notes', 'discharge_patients',
+          'create_tasks', 'complete_tasks', 'create_handovers', 'acknowledge_handovers',
+          'send_chat', 'add_alert'
+        ]},
+        { id: "Intern", permissions: [
+          'view_patients', 'admit_patients', 'update_vitals', 'write_notes',
+          'create_tasks', 'complete_tasks', 'create_handovers', 'acknowledge_handovers',
+          'send_chat'
+        ]}
+      ];
+      changed = true;
+    }
+    
+    // Auto-assign unit-peds to patients/tasks/handovers/clinicSlots if missing
+    ["patients", "tasks", "handovers", "clinicSlots"].forEach(col => {
+      if (Array.isArray(data[col])) {
+        data[col].forEach((item: any) => {
+          if (!item.unitId) {
+            item.unitId = "unit-peds";
+            changed = true;
+          }
+        });
+      }
+    });
+
+    if (changed) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    }
+
+    return data;
   } catch (e) {
     console.error("Failed to read DB, restoring backup...", e);
     if (fs.existsSync(BACKUP_FILE)) {
@@ -374,7 +433,7 @@ function readDB() {
       fs.writeFileSync(DB_FILE, backup);
       return JSON.parse(backup);
     }
-    return { users: [], patients: [], tasks: [], handovers: [], clinicSlots: [], chatMessages: [], auditLog: [], alerts: [] };
+    return { users: [], patients: [], tasks: [], handovers: [], clinicSlots: [], chatMessages: [], auditLog: [], alerts: [], units: [], rolePermissions: [] };
   }
 }
 
@@ -440,6 +499,10 @@ app.post("/api/auth/login", (req, res) => {
   
   if (!user) {
     return res.status(401).json({ error: "البريد الإلكتروني غير مسجل أو كلمة المرور غير صحيحة" });
+  }
+
+  if (user.disabled || user.archived) {
+    return res.status(403).json({ error: "هذا الحساب معطل أو غير نشط حالياً. يرجى مراجعة إدارة القسم." });
   }
 
   const passHash = hashPassword(password);
@@ -599,8 +662,116 @@ app.post("/api/sync", (req, res) => {
     auditLog: db.auditLog,
     alerts: db.alerts,
     users: db.users.map(({ password: _, ...u }: any) => u),
+    units: db.units || [],
+    rolePermissions: db.rolePermissions || [],
     serverTime: Date.now()
   });
+});
+
+// --- Admin Management & Smart Feature Endpoints ---
+
+// 1. Reset Demo Data (Director Only)
+app.post("/api/admin/reset-demo", (req, res) => {
+  const adminRole = safeDecodeHeader(req.headers["x-user-role"] as string);
+  const adminId = safeDecodeHeader(req.headers["x-user-id"] as string);
+  const adminName = safeDecodeHeader(req.headers["x-user-name"] as string);
+
+  if (adminRole !== "Director") {
+    return res.status(403).json({ error: "غير مصرح. إعادة تعيين البيانات متاح لمدير القسم فقط." });
+  }
+
+  const db = readDB();
+  db.patients = [];
+  db.tasks = [];
+  db.handovers = [];
+  db.clinicSlots = [];
+  db.chatMessages = [];
+  db.alerts = [];
+
+  writeDB(db);
+
+  addAuditEntry(adminId || "system", adminName || "Director", "Director", "إعادة تعيين البيانات", "تم تصفير كافة السجلات الطبية والبيانات التجريبية للنظام بنجاح.");
+
+  res.json({ success: true, db });
+});
+
+// 2. Update Dynamic Role Permissions (Director Only)
+app.post("/api/admin/role-permissions", (req, res) => {
+  const adminRole = safeDecodeHeader(req.headers["x-user-role"] as string);
+  const adminId = safeDecodeHeader(req.headers["x-user-id"] as string);
+  const adminName = safeDecodeHeader(req.headers["x-user-name"] as string);
+
+  if (adminRole !== "Director") {
+    return res.status(403).json({ error: "غير مصرح. تعديل الصلاحيات متاح لمدير القسم فقط." });
+  }
+
+  const { rolePermissions } = req.body; // Array of { id: string, permissions: string[] }
+  if (!rolePermissions || !Array.isArray(rolePermissions)) {
+    return res.status(400).json({ error: "بيانات غير صالحة" });
+  }
+
+  const db = readDB();
+  db.rolePermissions = rolePermissions;
+  writeDB(db);
+
+  addAuditEntry(adminId || "system", adminName || "Director", "Director", "تحديث الصلاحيات (RBAC)", "تم تحديث الصلاحيات المخصصة للأدوار الطبية في النظام.");
+
+  res.json({ success: true, rolePermissions: db.rolePermissions });
+});
+
+// 3. Update Units Configuration (Director Only)
+app.post("/api/admin/units", (req, res) => {
+  const adminRole = safeDecodeHeader(req.headers["x-user-role"] as string);
+  const adminId = safeDecodeHeader(req.headers["x-user-id"] as string);
+  const adminName = safeDecodeHeader(req.headers["x-user-name"] as string);
+
+  if (adminRole !== "Director") {
+    return res.status(403).json({ error: "غير مصرح. إدارة الأقسام متاح لمدير القسم فقط." });
+  }
+
+  const { units } = req.body; // Array of { id: string, name: string, managerId?: string }
+  if (!units || !Array.isArray(units)) {
+    return res.status(400).json({ error: "بيانات غير صالحة" });
+  }
+
+  const db = readDB();
+  db.units = units;
+  writeDB(db);
+
+  addAuditEntry(adminId || "system", adminName || "Director", "Director", "تحديث الأقسام", "تم تحديث وتعديل أقسام التنويم الطبي والمدراء المسؤولين.");
+
+  res.json({ success: true, units: db.units });
+});
+
+// 4. Update User Role, Status or Assignment (Director, Specialist, and Deputy)
+app.post("/api/users/:id/update", (req, res) => {
+  const adminRole = safeDecodeHeader(req.headers["x-user-role"] as string);
+  const adminId = safeDecodeHeader(req.headers["x-user-id"] as string);
+  const adminName = safeDecodeHeader(req.headers["x-user-name"] as string);
+
+  if (adminRole !== "Director" && adminRole !== "Specialist" && adminRole !== "Deputy") {
+    return res.status(403).json({ error: "غير مصرح." });
+  }
+
+  const { role, disabled, archived, assignedUnitId } = req.body;
+  const userId = req.params.id;
+
+  const db = readDB();
+  const index = db.users.findIndex((u: any) => u.id === userId);
+  if (index === -1) {
+    return res.status(404).json({ error: "المستخدم غير موجود" });
+  }
+
+  const u = db.users[index];
+  if (role) u.role = role;
+  if (disabled !== undefined) u.disabled = disabled;
+  if (archived !== undefined) u.archived = archived;
+  if (assignedUnitId !== undefined) u.assignedUnitId = assignedUnitId;
+
+  writeDB(db);
+  addAuditEntry(adminId || "system", adminName || "Director", adminRole as any || "Director", "تعديل مستخدم", `تم تعديل بيانات أو صلاحيات الحساب للكادر ${u.name}`);
+
+  res.json({ success: true, users: db.users.map(({ password: _, ...usr }: any) => usr) });
 });
 
 // --- AI decision support Fallbacks & Prompts ---

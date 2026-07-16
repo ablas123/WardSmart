@@ -525,3 +525,57 @@ export const clinicalGuidelines: ClinicalGuideline[] = [
     warningAr: 'يُحظر تماماً استخدام مضادات الإسهال الشللية (مثل لوبيراميد) للأطفال لأنها تحبس السموم وتسبب توسع القولون السمي القاتل.'
   }
 ];
+
+/**
+ * Calculates Pediatric Early Warning Score (PEWS) dynamically.
+ * Scores range from 0 (Normal) to 9 (Critical Danger).
+ */
+export function calculatePewsScore(temp: number, hr: number, rr: number, spo2: number, age: string): number {
+  let score = 0;
+  
+  // 1. Temperature score
+  if (temp >= 38.5 || temp <= 35.5) {
+    score += 1;
+  }
+  
+  // 2. Oxygen Saturation (SpO2)
+  if (spo2 < 92) {
+    score += 3;
+  } else if (spo2 >= 92 && spo2 <= 94) {
+    score += 1;
+  }
+  
+  // 3. Heart Rate (bpm) - adjusted for age in months/years
+  const isInfant = age.includes("شهر") || age.includes("أشهر") || age.includes("أسبوع") || age.includes("أسابيع") || age.toLowerCase().includes("month") || age.toLowerCase().includes("week");
+  if (isInfant) {
+    if (hr > 160 || hr < 80) {
+      score += 2;
+    } else if ((hr > 140 && hr <= 160) || (hr >= 80 && hr < 90)) {
+      score += 1;
+    }
+  } else {
+    if (hr > 140 || hr < 70) {
+      score += 2;
+    } else if ((hr > 120 && hr <= 140) || (hr >= 70 && hr < 80)) {
+      score += 1;
+    }
+  }
+  
+  // 4. Respiratory Rate
+  if (isInfant) {
+    if (rr > 50 || rr < 20) {
+      score += 2;
+    } else if (rr > 40 && rr <= 50) {
+      score += 1;
+    }
+  } else {
+    if (rr > 40 || rr < 15) {
+      score += 2;
+    } else if (rr > 30 && rr <= 40) {
+      score += 1;
+    }
+  }
+  
+  return score;
+}
+

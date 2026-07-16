@@ -11,6 +11,15 @@ export interface User {
   email: string;
   role: UserRole;
   password?: string;
+  disabled?: boolean;
+  archived?: boolean;
+  assignedUnitId?: string; // unit assigned to this user
+}
+
+export interface Unit {
+  id: string;
+  name: string;
+  managerId?: string; // Assigned Unit Manager user ID
 }
 
 export interface VitalRecord {
@@ -22,6 +31,7 @@ export interface VitalRecord {
   diastolicBp: number;
   spo2: number; // %
   author: string;
+  pewsScore?: number;
 }
 
 export interface GrowthRecord {
@@ -87,6 +97,12 @@ export interface Patient {
   dischargeNotes?: string;
   dischargedAt?: string;
 
+  // New multi-unit and follow-up fields
+  unitId?: string; // isolation
+  requiresFollowup?: boolean; // Director/Specialist/Deputy mandatory follow-up alert
+  assignedFollowupInternId?: string; // Specific intern assigned for follow-up and SOAP
+  assignedFollowupInternName?: string;
+
   updatedAt: number;
 }
 
@@ -102,6 +118,7 @@ export interface Task {
   completed: boolean;
   completedBy?: string;
   completedAt?: string;
+  unitId?: string; // Isolation
   updatedAt: number;
 }
 
@@ -119,6 +136,7 @@ export interface SbarHandover {
   isUrgent: boolean;
   acknowledgedBy?: string;
   acknowledgedAt?: string;
+  unitId?: string; // Isolation
   updatedAt: number;
 }
 
@@ -129,6 +147,7 @@ export interface ClinicSlot {
   age: string;
   reason: string;
   status: 'waiting' | 'completed';
+  unitId?: string; // Isolation
   updatedAt: number;
 }
 
@@ -190,8 +209,26 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   ]
 };
 
+let dynamicPermissions: Record<UserRole, string[]> | null = null;
+
+export function setDynamicPermissions(perms: Record<UserRole, string[]>) {
+  dynamicPermissions = perms;
+  try {
+    localStorage.setItem('coreward_dynamic_permissions', JSON.stringify(perms));
+  } catch (e) {}
+}
+
 export function hasPermission(role: UserRole, permission: string): boolean {
-  return ROLE_PERMISSIONS[role]?.includes(permission) || false;
+  if (!dynamicPermissions) {
+    try {
+      const stored = localStorage.getItem('coreward_dynamic_permissions');
+      if (stored) {
+        dynamicPermissions = JSON.parse(stored);
+      }
+    } catch (e) {}
+  }
+  const perms = dynamicPermissions || ROLE_PERMISSIONS;
+  return perms[role]?.includes(permission) || false;
 }
 
 export function getRoleLabel(role: UserRole, lang: 'ar' | 'en' = 'ar'): string {

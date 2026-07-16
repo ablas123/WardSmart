@@ -24,7 +24,9 @@ const STORAGE_KEYS = {
   ALERTS: 'coreward_alerts',
   SYNC_QUEUE: 'coreward_sync_queue',
   CURRENT_USER: 'coreward_current_user',
-  TEAM_MEMBERS: 'coreward_team_members'
+  TEAM_MEMBERS: 'coreward_team_members',
+  UNITS: 'coreward_units',
+  ROLE_PERMISSIONS: 'coreward_role_permissions'
 };
 
 export const localDB = {
@@ -86,6 +88,14 @@ export const localDB = {
     return localDB.get<User[]>(STORAGE_KEYS.TEAM_MEMBERS, []);
   },
 
+  getUnits(): any[] {
+    return localDB.get<any[]>(STORAGE_KEYS.UNITS, []);
+  },
+
+  getRolePermissions(): any[] {
+    return localDB.get<any[]>(STORAGE_KEYS.ROLE_PERMISSIONS, []);
+  },
+
   // Save specific collection directly
   savePatients(patients: Patient[]): void { this.set(STORAGE_KEYS.PATIENTS, patients); },
   saveTasks(tasks: Task[]): void { this.set(STORAGE_KEYS.TASKS, tasks); },
@@ -97,6 +107,8 @@ export const localDB = {
   saveSyncQueue(queue: SyncQueueAction[]): void { this.set(STORAGE_KEYS.SYNC_QUEUE, queue); },
   saveCurrentUser(user: User | null): void { this.set(STORAGE_KEYS.CURRENT_USER, user); },
   saveTeamMembers(members: User[]): void { this.set(STORAGE_KEYS.TEAM_MEMBERS, members); },
+  saveUnits(units: any[]): void { this.set(STORAGE_KEYS.UNITS, units); },
+  saveRolePermissions(rolePermissions: any[]): void { this.set(STORAGE_KEYS.ROLE_PERMISSIONS, rolePermissions); },
 
   // Add Sync Action to local queue
   queueSyncAction(

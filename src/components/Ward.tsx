@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Patient, User, VitalRecord, Medication, SoapEntry, GrowthRecord, hasPermission } from '../types';
+import { Patient, User, VitalRecord, Medication, SoapEntry, GrowthRecord, hasPermission, getRoleLabel, getRoleColor } from '../types';
 import { 
   Users, UserPlus, Search, Bed, Activity, Thermometer, Heart, AlertCircle, 
   Baby, ClipboardCheck, Sparkles, Plus, Trash2, CheckCircle2, ChevronRight,
@@ -20,7 +20,8 @@ import {
   clinicalGuidelines, 
   GrowthAssessment, 
   BnfCalculationResult,
-  zScoreToPercentile
+  zScoreToPercentile,
+  calculatePewsScore
 } from '../utils/pediatricIntel';
 
 interface WardProps {
@@ -91,6 +92,8 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
   const [soapO, setSoapO] = useState('');
   const [soapA, setSoapA] = useState('');
   const [soapP, setSoapP] = useState('');
+  const [soapRequiresFollowup, setSoapRequiresFollowup] = useState(false);
+  const [soapFollowupInternId, setSoapFollowupInternId] = useState('');
 
   // Edit Patient form states
   const [isEditingPatient, setIsEditingPatient] = useState(false);
@@ -324,11 +327,21 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
       author: currentUser.name
     };
 
-    // Calculate critical level triggers based on new vitals with recovery path to stable
+    // Auto calculate PEWS Score using pediatric clinical guidelines
+    const pews = calculatePewsScore(
+      record.temp,
+      record.heartRate,
+      record.respRate,
+      record.spo2,
+      selectedPatient.age || '5'
+    );
+    record.pewsScore = pews;
+
+    // Determine status and required clinical actions
     let newStatus: Patient['status'] = selectedPatient.status;
-    if (record.spo2 < 92 || record.temp >= 39.5) {
+    if (pews >= 5) {
       newStatus = 'critical';
-    } else if (record.temp >= 38.0 || record.spo2 < 95) {
+    } else if (pews >= 3) {
       newStatus = 'followup';
     } else {
       newStatus = 'stable';
@@ -341,7 +354,7 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
       updatedAt: Date.now()
     });
 
-    onAddAuditLog('إضافة علامات حيوية', `تم رصد علامات حيوية جديدة للمريض ${selectedPatient.name}. (حرارة: ${record.temp}، أكسجين: ${record.spo2}٪).`);
+    onAddAuditLog('إضافة علامات حيوية', `تم رصد علامات حيوية جديدة للمريض ${selectedPatient.name} مع حساب مؤشر التحذير المبكر PEWS: ${pews}.`);
     
     // Refresh selected patient reference
     setSelectedPatient({
@@ -435,22 +448,36 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
       p: soapP
     };
     const updatedSoap = [newEntry, ...(selectedPatient.soapHistory || [])];
-    onUpdatePatient(selectedPatient.id, {
+    
+    const patientUpdates: Partial<Patient> = {
       soapHistory: updatedSoap,
       updatedAt: Date.now()
-    });
+    };
+
+    if (soapRequiresFollowup) {
+      patientUpdates.requiresFollowup = true;
+      patientUpdates.assignedFollowupInternId = soapFollowupInternId || undefined;
+    } else {
+      patientUpdates.requiresFollowup = false;
+      patientUpdates.assignedFollowupInternId = undefined;
+    }
+
+    onUpdatePatient(selectedPatient.id, patientUpdates);
+    
     setSelectedPatient({
       ...selectedPatient,
-      soapHistory: updatedSoap
+      ...patientUpdates
     });
 
-    onAddAuditLog('إضافة SOAP الملاحظات', `تمت إضافة ملخص ملاحظات SOAP طبي للمريض ${selectedPatient.name}.`);
+    onAddAuditLog('إضافة SOAP الملاحظات', `تمت إضافة ملخص ملاحظات SOAP طبي للمريض ${selectedPatient.name}.${soapRequiresFollowup ? ' مع تعيين متابعة إجبارية.' : ''}`);
     
     // Clear form
     setSoapS('');
     setSoapO('');
     setSoapA('');
     setSoapP('');
+    setSoapRequiresFollowup(false);
+    setSoapFollowupInternId('');
   };
 
   // Add growth measurements and calculate WHO / CDC pediatric scores
@@ -1533,100 +1560,280 @@ export default function Ward({ patients, teamMembers, currentUser, onAddPatient,
 
               {/* Tab 5: SOAP Notes */}
               {detailTab === 'soap' && (
-                <div className="space-y-6">
+                <div className="space-y-6 animate-fade-in">
+                  
+                  {/* Clinical Progress & Follow-up Dashboard */}
+                  <div className="bg-gradient-to-br from-slate-900 to-slate-950 p-5 rounded-2xl border border-slate-800 text-white shadow-xl space-y-4">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-3">
+                      <div>
+                        <h3 className="text-sm font-black text-white flex items-center gap-2">
+                          <Activity className="w-4.5 h-4.5 text-blue-400" />
+                          {isEn ? "Clinical Progress Dashboard" : "لوحة متابعة التطور السريري للمريض"}
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                          {isEn ? "Continuous PEWS tracking and daily SOAP assessment metrics" : "مؤشرات التقييم اليومي الممنهج ورصد درجات التحذير المبكر"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        {selectedPatient.requiresFollowup && (
+                          <span className="px-2.5 py-1 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-[10px] font-black animate-pulse flex items-center gap-1">
+                            ⚠️ {isEn ? "Requires Mandatory Follow-up" : "يتطلب متابعة إلزامية حثيثة"}
+                          </span>
+                        )}
+                        <span className="px-2.5 py-1 bg-slate-800 text-slate-300 border border-slate-700/60 rounded-lg text-[10px] font-extrabold">
+                          🕒 {isEn ? "Hospital Stay:" : "مدة التنويم الجاري:"} {(() => {
+                            const diffTime = Math.max(0, Date.now() - (selectedPatient.createdAt || Date.now()));
+                            const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                            return lang === 'ar' ? `${days} أيام` : `${days} days`;
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Current Status Metric */}
+                      <div className="bg-slate-900/60 border border-slate-800/80 p-3 rounded-xl space-y-1.5 text-right">
+                        <span className="text-[10px] text-slate-400 font-bold block">{isEn ? "Current Status:" : "حالة المريض الحالية:"}</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2.5 h-2.5 rounded-full ${
+                            selectedPatient.status === 'critical' ? 'bg-red-500 animate-ping' :
+                            selectedPatient.status === 'followup' ? 'bg-amber-500' : 'bg-green-500'
+                          }`}></span>
+                          <span className="text-xs font-black">
+                            {selectedPatient.status === 'critical' ? (isEn ? "Critical" : "حرجة / غير مستقرة") :
+                             selectedPatient.status === 'followup' ? (isEn ? "Needs Follow-up" : "متابعة مستمرة") :
+                             (isEn ? "Stable" : "مستقرة")}
+                          </span>
+                        </div>
+                        {selectedPatient.assignedFollowupInternId && (
+                          <span className="text-[10px] text-blue-400 font-bold block">
+                            👤 {isEn ? "Assigned Intern:" : "طبيب الامتياز المتابع:"} {
+                              teamMembers.find(m => m.id === selectedPatient.assignedFollowupInternId)?.name || (isEn ? "Intern Assigned" : "طبيب امتياز")
+                            }
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Active Warning Scores */}
+                      <div className="bg-slate-900/60 border border-slate-800/80 p-3 rounded-xl space-y-1 text-right">
+                        <span className="text-[10px] text-slate-400 font-bold block">{isEn ? "Latest PEWS Index:" : "آخر مؤشر PEWS مرصود:"}</span>
+                        <div className="flex items-baseline gap-1.5">
+                          <span className={`text-xl font-black ${
+                            (selectedPatient.vitalsHistory[0]?.pewsScore || 0) >= 5 ? 'text-red-400' :
+                            (selectedPatient.vitalsHistory[0]?.pewsScore || 0) >= 3 ? 'text-amber-400' : 'text-green-400'
+                          }`}>
+                            {selectedPatient.vitalsHistory[0]?.pewsScore ?? 0}
+                          </span>
+                          <span className="text-[10px] text-slate-500">/ 9</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 font-bold block">
+                          {(() => {
+                            const score = selectedPatient.vitalsHistory[0]?.pewsScore ?? 0;
+                            if (score >= 5) return lang === 'ar' ? '⚠️ تدهور شديد: استدعِ الأخصائي والإنعاش!' : 'Severe risk: notify Specialist!';
+                            if (score >= 3) return lang === 'ar' ? '⚡ خطورة متوسطة: كرر القياس كل ساعتين' : 'Medium risk: check vitals q2h';
+                            return lang === 'ar' ? '✓ آمن ومستقر: متابعة روتينية للعلامات' : 'Low risk: routine clinical monitoring';
+                          })()}
+                        </span>
+                      </div>
+
+                      {/* Visual PEWS Trend Chart */}
+                      <div className="bg-slate-900/60 border border-slate-800/80 p-3 rounded-xl text-right flex flex-col justify-between">
+                        <span className="text-[10px] text-slate-400 font-bold block mb-1">{isEn ? "PEWS Score History Trend:" : "منحنى تطور درجات الـ PEWS الأخيرة:"}</span>
+                        {selectedPatient.vitalsHistory.length > 0 ? (
+                          <div className="h-10 w-full flex items-end gap-1 px-1 pt-1 border-b border-slate-800">
+                            {selectedPatient.vitalsHistory.slice(0, 7).reverse().map((vh, idx) => {
+                              const scoreVal = vh.pewsScore ?? 0;
+                              const heightPct = Math.min(100, Math.max(15, (scoreVal / 9) * 100));
+                              return (
+                                <div key={idx} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+                                  {/* Tooltip */}
+                                  <span className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 bg-slate-950 border border-slate-800 text-white font-black text-[9px] py-0.5 px-1.5 rounded transition-all pointer-events-none whitespace-nowrap z-50">
+                                    PEWS: {scoreVal}
+                                  </span>
+                                  <div 
+                                    className={`w-full rounded-t transition-all duration-300 ${
+                                      scoreVal >= 5 ? 'bg-red-500 hover:bg-red-400' :
+                                      scoreVal >= 3 ? 'bg-amber-500 hover:bg-amber-400' : 'bg-green-500 hover:bg-green-400'
+                                    }`}
+                                    style={{ height: `${heightPct}%` }}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-[9px] text-slate-500 text-center py-2">{isEn ? "No vitals recorded" : "لا توجد قراءات مسجلة"}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Create SOAP Note */}
                   {hasPermission(currentUser.role, 'write_notes') && (
-                    <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
-                      <h3 className="text-xs font-bold text-slate-700">تدوين ملاحظة SOAP تقدمية جديدة لليوم</h3>
+                    <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4 shadow-sm">
+                      <div className="flex justify-between items-center border-b border-slate-200/60 pb-2">
+                        <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <FileText className="w-4 h-4 text-blue-600" />
+                          {isEn ? "Draft New Daily SOAP Clinical Progress Note" : "تدوين ملاحظة SOAP تقدمية جديدة لليوم"}
+                        </h3>
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[9px] font-black border border-blue-100">
+                          ✍️ {currentUser.name} ({getRoleLabel(currentUser.role, lang)})
+                        </span>
+                      </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-500 font-bold block">S (المعطيات الشخصية الذاتية - Subjective)</label>
+                          <label className="text-[10px] text-slate-600 font-bold block">S (المعطيات الشخصية الذاتية - Subjective)</label>
                           <textarea 
-                            placeholder="شكاوى الأهل، الرضاعة، النوم، الحركة..."
+                            placeholder={isEn ? "Complaints of pain, nursing, feeding, activity level..." : "شكاوى الأهل، الرضاعة، النوم، الحركة، درجة النشاط والوعي..."}
                             value={soapS}
                             onChange={(e) => setSoapS(e.target.value)}
-                            rows={2}
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none"
+                            rows={3}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-500 font-bold block">O (الملاحظات السريرية الموضوعية - Objective)</label>
+                          <label className="text-[10px] text-slate-600 font-bold block">O (الملاحظات السريرية الموضوعية - Objective)</label>
                           <textarea 
-                            placeholder="الفحص الطبي، أصوات الصدر، البطن، قياسات المراقبة..."
+                            placeholder={isEn ? "Heart/lung sounds, physical exams, monitoring measurements..." : "الفحص السريري للطبيب، أصوات الصدر والقلب، البطن، قياسات المراقبة..."}
                             value={soapO}
                             onChange={(e) => setSoapO(e.target.value)}
-                            rows={2}
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none"
+                            rows={3}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
                           />
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-500 font-bold block">A (التقييم الطبي الحالي - Assessment)</label>
+                          <label className="text-[10px] text-slate-600 font-bold block">A (التقييم الطبي الحالي - Assessment)</label>
                           <textarea 
-                            placeholder="هل توجد أزمة تنفسية حادة؟ تحسن؟ تدهور؟ استقرار؟"
+                            placeholder={isEn ? "Respiratory distress status, improvement, stability, deterioration..." : "الوضع التنفسي والدوراني والالتهابي الحالي، تحسن؟ تدهور؟ استقرار؟"}
                             value={soapA}
                             onChange={(e) => setSoapA(e.target.value)}
-                            rows={2}
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none"
+                            rows={3}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-500 font-bold block">P (الخطة العلاجية والسريرية المقررة - Plan)</label>
+                          <label className="text-[10px] text-slate-600 font-bold block">P (الخطة العلاجية والسريرية المقررة - Plan)</label>
                           <textarea 
-                            placeholder="تعديل الأدوية، طلب تحاليل إضافية، متابعة الجراحة..."
+                            placeholder={isEn ? "Medication modifications, fluids, lab tests, consultation plans..." : "تعديل الأدوية والسوائل، طلب تحاليل إضافية، متابعة الجراحة..."}
                             value={soapP}
                             onChange={(e) => setSoapP(e.target.value)}
-                            rows={2}
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none"
+                            rows={3}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all font-semibold"
                           />
                         </div>
                       </div>
 
+                      {/* Mandatory Follow-up & Intern Assignment dispatcher */}
+                      <div className="bg-slate-100 p-4 rounded-xl border border-slate-200/60 space-y-3.5">
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="checkbox"
+                            id="soapRequiresFollowup"
+                            checked={soapRequiresFollowup}
+                            onChange={(e) => setSoapRequiresFollowup(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                          />
+                          <label htmlFor="soapRequiresFollowup" className="text-xs font-extrabold text-slate-700 cursor-pointer">
+                            🚨 {isEn ? "Declare Mandatory Follow-up Needed (Due to instability)" : "فرض وتثبيت متابعة سريرية إلزامية مستعجلة للطفل"}
+                          </label>
+                        </div>
+
+                        {soapRequiresFollowup && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pl-6 animate-fade-in text-right">
+                            <div className="space-y-1 text-right">
+                              <label className="text-[10px] text-slate-500 font-bold block">
+                                {isEn ? "Assign Intern to execute follow-up:" : "تعيين طبيب الامتياز المناوب لإجراء المتابعة:"}
+                              </label>
+                              <select
+                                value={soapFollowupInternId}
+                                onChange={(e) => setSoapFollowupInternId(e.target.value)}
+                                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none"
+                              >
+                                <option value="">-- {isEn ? "No specific Intern assigned (All team will see it)" : "بدون تحديد - ستظهر لكافة أطباء الامتياز في الوردية"} --</option>
+                                {teamMembers
+                                  .filter(m => m.role === 'Intern' && !m.archived && !m.disabled)
+                                  .map(intern => (
+                                    <option key={intern.id} value={intern.id}>
+                                      Dr. {intern.name} (امتياز)
+                                    </option>
+                                  ))
+                                }
+                              </select>
+                            </div>
+                            <div className="flex items-center justify-end">
+                              <span className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-200/50 p-2 rounded-xl">
+                                ℹ️ {isEn ? "The assigned intern will receive high-profile warning alert inside their ward panel." : "سيظهر تنبيه عالي الخطورة للامتياز المختار يطالبه بإثبات رصد العلامات فوراً."}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
                       <button 
+                        type="button"
                         onClick={handleAddSoap}
-                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-4 py-2 rounded-xl font-bold transition-all block w-max"
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-4.5 py-2.5 rounded-xl font-black transition-all shadow-md hover:shadow-lg flex items-center gap-1.5 cursor-pointer"
                       >
-                        حفظ الملاحظة الطبية ونشرها للقسم
+                        <CheckCircle2 className="w-4 h-4" />
+                        {isEn ? "Save and Publish Clinical SOAP Note" : "حفظ ونشر المذكرة الطبية فوراً لملف التنويم"}
                       </button>
                     </div>
                   )}
 
-                  {/* SOAP Logs */}
+                  {/* SOAP Logs - Reverse Chronological Timeline */}
                   <div className="space-y-4">
-                    <h3 className="text-xs font-bold text-slate-500">مذكرات الـ SOAP التاريخية المسجلة</h3>
+                    <h3 className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                      {isEn ? "Clinical SOAP Timeline Logs" : "سجل مذكرات الـ SOAP السريرية المتتابعة"}
+                    </h3>
+                    
                     {!selectedPatient.soapHistory || selectedPatient.soapHistory.length === 0 ? (
-                      <div className="text-center py-10 text-slate-400 text-xs">لم يتم تدوين أي مذكرات SOAP لهذا المريض حتى الآن.</div>
+                      <div className="text-center py-12 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs">
+                        {isEn ? "No SOAP progress notes recorded for this patient yet." : "لم يتم تدوين أي مذكرات SOAP لهذا المريض حتى الآن."}
+                      </div>
                     ) : (
-                      <div className="space-y-4">
+                      <div className="relative border-r-2 border-slate-200/80 pr-5 mr-3.5 space-y-6">
                         {selectedPatient.soapHistory.map((item) => (
-                          <div key={item.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3 relative">
-                            <div className="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-200/50 pb-2">
-                              <span>الكاتب: <span className="font-bold text-slate-700">{item.author} ({item.role})</span></span>
-                              <span>تاريخ القيد: {new Date(item.timestamp).toLocaleString('ar-EG')}</span>
+                          <div key={item.id} className="relative bg-white p-4.5 rounded-2xl border border-slate-100 shadow-3xs space-y-3.5 hover:border-slate-200 transition-all">
+                            
+                            {/* Timeline Node Dot */}
+                            <div className="absolute right-0 top-6 w-3.5 h-3.5 bg-indigo-600 border-2 border-white rounded-full translate-x-[27.5px] z-10 shadow-3xs" />
+
+                            <div className="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-100 pb-2 flex-wrap gap-2">
+                              <span className="flex items-center gap-1.5 font-bold">
+                                <span className={`w-2 h-2 rounded-full ${getRoleColor(item.role)}`}></span>
+                                <span className="text-slate-700 font-extrabold">{item.author}</span>
+                                <span className="text-[9px] text-slate-400 px-1 bg-slate-100 border border-slate-200 rounded">
+                                  {getRoleLabel(item.role, lang)}
+                                </span>
+                              </span>
+                              <span className="font-extrabold text-slate-500">
+                                📅 {new Date(item.timestamp).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' })}
+                              </span>
                             </div>
                             
-                            <div className="grid grid-cols-2 gap-4 text-xs">
-                              <div>
-                                <span className="font-bold text-indigo-700 block mb-0.5">Subjective (الشكوى الذاتية)</span>
-                                <p className="text-slate-600 leading-relaxed">{item.s}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                                <span className="font-bold text-indigo-700 block mb-1">Subjective (S - الشكوى والأعراض الذاتية)</span>
+                                <p className="text-slate-600 leading-relaxed font-semibold">{item.s}</p>
                               </div>
-                              <div>
-                                <span className="font-bold text-indigo-700 block mb-0.5">Objective (الملاحظات الموضوعية)</span>
-                                <p className="text-slate-600 leading-relaxed">{item.o}</p>
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                                <span className="font-bold text-indigo-700 block mb-1">Objective (O - الملاحظات الطبية الموضوعية)</span>
+                                <p className="text-slate-600 leading-relaxed font-semibold">{item.o}</p>
                               </div>
                             </div>
                             
-                            <div className="grid grid-cols-2 gap-4 text-xs border-t border-slate-100 pt-2">
-                              <div>
-                                <span className="font-bold text-indigo-700 block mb-0.5">Assessment (التقييم الطبي)</span>
-                                <p className="text-slate-600 leading-relaxed font-semibold">{item.a}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs border-t border-slate-100/60 pt-3">
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100/50">
+                                <span className="font-bold text-emerald-700 block mb-1">Assessment (A - التقييم السريري الشامل)</span>
+                                <p className="text-slate-700 leading-relaxed font-extrabold">{item.a}</p>
                               </div>
-                              <div>
-                                <span className="font-bold text-indigo-700 block mb-0.5">Plan (الخطة العلاجية)</span>
-                                <p className="text-slate-600 leading-relaxed font-semibold text-blue-700">{item.p}</p>
+                              <div className="bg-blue-50/40 p-3 rounded-xl border border-blue-100/50">
+                                <span className="font-bold text-blue-700 block mb-1">Plan (P - الخطة العلاجية والدوائية)</span>
+                                <p className="text-blue-800 leading-relaxed font-extrabold">{item.p}</p>
                               </div>
                             </div>
                           </div>
